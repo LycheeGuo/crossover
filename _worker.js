@@ -1,9 +1,8 @@
 import { connect } from "cloudflare:sockets";
 
-// [全局变量]
+// 全局变量 (保持原样，供普通逻辑使用)
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
-// 只保留 scholar 白名单
-let SOCKS5白名单 = ['scholar.google.com'];
+let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
@@ -478,7 +477,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
     // ---------------- AIP 逻辑开始 (修复全局污染问题) ----------------
     if (host.includes('scholar.google.com') && AIP_Proxy_List) {
         try {
-            console.log(`[AIP] 检测到 scholar.google.com，正在尝试分流...`);
             const AIP_Array = await 整理成数组(AIP_Proxy_List);
             if (AIP_Array.length > 0) {
                 const randomProxy = AIP_Array[Math.floor(Math.random() * AIP_Array.length)];
@@ -486,7 +484,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                 
                 // 解析这个特定的代理配置
                 const specificProxyConf = await 获取SOCKS5账号(cleanProxy);
-                console.log(`[AIP] 使用代理: ${specificProxyConf.hostname}:${specificProxyConf.port}`);
 
                 // 强制使用 httpConnect 连接，并传入特定配置
                 const newSocket = await httpConnect(host, portNum, rawData, specificProxyConf);
