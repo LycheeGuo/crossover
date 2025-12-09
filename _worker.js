@@ -2,6 +2,7 @@ import { connect } from "cloudflare:sockets";
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
+
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
     async fetch(request, env, ctx) {
@@ -21,6 +22,10 @@ export default {
         } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
         if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
+        
+        // 获取 AIP 变量
+        const AIP_Var = env.AIP || '';
+
         if (!upgradeHeader || upgradeHeader !== 'websocket') {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
@@ -304,8 +309,8 @@ export default {
             } else if (访问路径 === 'locations') return fetch(new Request('https://speed.cloudflare.com/locations'));
         } else if (管理员密码) {// ws代理
             await 反代参数获取(request);
-            // 修改点：传递 env.AIP
-            return await 处理WS请求(request, userID, env.AIP);
+            // 传递 AIP_Var 到处理函数
+            return await 处理WS请求(request, userID, AIP_Var);
         }
 
         let 伪装页URL = env.URL || 'nginx';
@@ -327,8 +332,9 @@ export default {
         return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
     }
 };
+
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-// 修改点：接收 AIP_Var
+// 接收 AIP_Var
 async function 处理WS请求(request, yourUUID, AIP_Var) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
@@ -363,7 +369,7 @@ async function 处理WS请求(request, yourUUID, AIP_Var) {
             if (判断是否是木马) {
                 const { port, hostname, rawClientData } = 解析木马请求(chunk, yourUUID);
                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                // 修改点：传递 AIP_Var
+                // 传递 AIP_Var
                 await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, AIP_Var);
             } else {
                 const { port, hostname, rawIndex, version, isUDP } = 解析魏烈思请求(chunk, yourUUID);
@@ -375,7 +381,7 @@ async function 处理WS请求(request, yourUUID, AIP_Var) {
                 const respHeader = new Uint8Array([version[0], 0]);
                 const rawData = chunk.slice(rawIndex);
                 if (isDnsQuery) return forwardataudp(rawData, serverSock, respHeader);
-                // 修改点：传递 AIP_Var
+                // 传递 AIP_Var
                 await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, AIP_Var);
             }
         },
@@ -480,32 +486,38 @@ function 解析魏烈思请求(chunk, token) {
     if (!hostname) return { hasError: true, message: `Invalid address: ${addressType}` };
     return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
 }
-// 修改点：接收 AIP_Var
+
+// 接收 AIP_Var
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, AIP_Var) {
-    // ------------------- 新增 AIP 逻辑开始 -------------------
+    // ------------------- AIP 专用逻辑 (修改了实现方式以避免全局变量污染) -------------------
     if (host.includes('scholar.google.com') && AIP_Var) {
         try {
+            console.log(`[AIP] 正在为 ${host} 寻找代理...`);
             const AIP_List = await 整理成数组(AIP_Var);
             if (AIP_List.length > 0) {
                 const randomAIP = AIP_List[Math.floor(Math.random() * AIP_List.length)];
-                // 更新全局的 socks5 配置供 httpConnect 使用
-                parsedSocks5Address = await 获取SOCKS5账号(randomAIP);
+                // 清理可能存在的 http:// 前缀，确保解析正常
+                const cleanAIP = randomAIP.replace(/^https?:\/\//, '');
+                console.log(`[AIP] 选中代理: ${cleanAIP}`);
                 
-                // 强制使用 HTTP 代理连接
-                const newSocket = await httpConnect(host, portNum, rawData);
+                // 解析这个特定的代理，获取配置对象，而不是修改全局变量
+                const specificProxyConf = await 获取SOCKS5账号(cleanAIP);
+                
+                // 传入配置对象进行连接
+                const newSocket = await httpConnect(host, portNum, rawData, specificProxyConf);
+                
                 remoteConnWrapper.socket = newSocket;
                 newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
                 connectStreams(newSocket, ws, respHeader, null);
-                return; // 成功则直接返回，不执行下方原有逻辑
+                return; // 成功则直接退出，不走下方逻辑
             }
         } catch (err) {
-            console.error(`AIP代理连接失败: ${err.message}`);
-            // 失败后继续执行后续原有逻辑，不做阻断
+            console.error(`[AIP] 代理连接失败，回退到默认逻辑: ${err.message}`);
         }
     }
-    // ------------------- 新增 AIP 逻辑结束 -------------------
+    // ------------------- AIP 专用逻辑结束 -------------------
 
-    console.log(JSON.stringify({ configJSON: { 目标地址: host, 目标端口: portNum, 反代IP: 反代IP, 代理类型: 启用SOCKS5反代, 全局代理: 启用SOCKS5全局反代, 代理账号: 我的SOCKS5账号 } }));
+    // 原有逻辑
     async function connectDirect(address, port, data) {
         const remoteSock = connect({ hostname: address, port: port });
         const writer = remoteSock.writable.getWriter();
@@ -518,7 +530,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         if (启用SOCKS5反代 === 'socks5') {
             newSocket = await socks5Connect(host, portNum, rawData);
         } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
-            newSocket = await httpConnect(host, portNum, rawData);
+            newSocket = await httpConnect(host, portNum, rawData); // 这里使用全局配置
         } else {
             try {
                 const [反代IP地址, 反代IP端口] = await 解析地址端口(反代IP);
@@ -666,8 +678,9 @@ function base64ToArray(b64Str) {
     }
 }
 ////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+// 修改点：允许传入 specificProxyConf
+async function socks5Connect(targetHost, targetPort, initialData, specificProxyConf = null) {
+    const { username, password, hostname, port } = specificProxyConf || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -702,8 +715,9 @@ async function socks5Connect(targetHost, targetPort, initialData) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+// 修改点：允许传入 specificProxyConf
+async function httpConnect(targetHost, targetPort, initialData, specificProxyConf = null) {
+    const { username, password, hostname, port } = specificProxyConf || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
