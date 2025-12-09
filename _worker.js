@@ -3,12 +3,12 @@ import { connect } from "cloudflare:sockets";
 // [配置] 默认学术代理 IP (会被后台变量 ACADEMIC_PROXY 覆盖)
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {}, 学术反代IP = '';
 
-// [修改] 只保留 scholar.google.com，其他全部删除
+// [修改] 白名单只保留 scholar.google.com
 let SOCKS5白名单 = ['scholar.google.com'];
 
 const Pages静态页面 = 'https://edt-pages.github.io';
 
-// [新增] 自定义国旗列表 (你可以自己增减)
+// [新增] 自定义国旗列表 (让节点显示好看)
 const 国家国旗列表 = [
     '🇺🇸 US', '🇭🇰 HK', '🇯🇵 JP', '🇸🇬 SG', '🇹🇼 TW', '🇬🇧 UK', '🇰🇷 KR', '🇩🇪 DE', '🇫🇷 FR'
 ];
@@ -33,7 +33,7 @@ export default {
             反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
         } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         
-        // 读取 ACADEMIC_PROXY 变量
+        // [新增] 读取 ACADEMIC_PROXY 变量
         if (env.ACADEMIC_PROXY) {
             try {
                 const academicIPs = await 整理成数组(env.ACADEMIC_PROXY);
@@ -112,11 +112,11 @@ export default {
                     return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 }
 
-                config_JSON = await 读取config_JSON(env, host, userID);
+                config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
 
                 if (访问路径 === 'admin/init') {// 重置配置为默认值
                     try {
-                        config_JSON = await 读取config_JSON(env, host, userID, true);
+                        config_JSON = await 读取config_JSON(env, host, userID, env.PATH, true);
                         ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Init_Config', config_JSON));
                         config_JSON.init = '配置已重置为默认值';
                         return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -124,8 +124,8 @@ export default {
                         const errorResponse = { msg: '配置重置失败，失败原因：' + err.message, error: err.message };
                         return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                     }
-                } else if (request.method === 'POST') {// 处理 KV 操作
-                    if (访问路径 === 'admin/config.json') {
+                } else if (request.method === 'POST') {// 处理 KV 操作（POST 请求）
+                    if (访问路径 === 'admin/config.json') { // 保存config.json配置
                         try {
                             const newConfig = await request.json();
                             if (!newConfig.UUID || !newConfig.HOST) return new Response(JSON.stringify({ error: '配置不完整' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -135,7 +135,7 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
-                    } else if (访问路径 === 'admin/cf.json') {
+                    } else if (访问路径 === 'admin/cf.json') { // 保存cf.json配置
                         try {
                             const newConfig = await request.json();
                             const CF_JSON = { Email: null, GlobalAPIKey: null, AccountID: null, APIToken: null };
@@ -160,7 +160,7 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
-                    } else if (访问路径 === 'admin/tg.json') {
+                    } else if (访问路径 === 'admin/tg.json') { // 保存tg.json配置
                         try {
                             const newConfig = await request.json();
                             if (newConfig.init && newConfig.init === true) {
@@ -175,36 +175,36 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
-                    } else if (区分大小写访问路径 === 'admin/ADD.txt') {
+                    } else if (区分大小写访问路径 === 'admin/ADD.txt') { // 保存自定义优选IP
                         try {
                             const customIPs = await request.text();
-                            await env.KV.put('ADD.txt', customIPs);
+                            await env.KV.put('ADD.txt', customIPs);// 保存到 KV
                             ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Custom_IPs', config_JSON));
                             return new Response(JSON.stringify({ success: true, message: '自定义IP已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存自定义IP失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
                     } else return new Response(JSON.stringify({ error: '不支持的POST请求路径' }), { status: 404, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-                } else if (访问路径 === 'admin/config.json') {
+                } else if (访问路径 === 'admin/config.json') {// 处理 admin/config.json 请求，返回JSON
                     return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
-                } else if (区分大小写访问路径 === 'admin/ADD.txt') {
+                } else if (区分大小写访问路径 === 'admin/ADD.txt') {// 处理 admin/ADD.txt 请求，返回本地优选IP
                     let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
                     if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
                     return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
-                } else if (访问路径 === 'admin/cf.json') {
+                } else if (访问路径 === 'admin/cf.json') {// CF配置文件
                     return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 }
 
                 ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Admin_Login', config_JSON));
                 return fetch(Pages静态页面 + '/admin');
-            } else if (访问路径 === 'logout') {
+            } else if (访问路径 === 'logout') {//清除cookie并跳转到登录页面
                 const 响应 = new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
                 响应.headers.set('Set-Cookie', 'auth=; Path=/; Max-Age=0; HttpOnly');
                 return 响应;
             } else if (访问路径 === 'sub') {//处理订阅请求
                 const 订阅TOKEN = await MD5MD5(host + userID);
                 if (url.searchParams.get('token') === 订阅TOKEN) {
-                    config_JSON = await 读取config_JSON(env, host, userID);
+                    config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
                     ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_SUB', config_JSON));
                     const ua = UA.toLowerCase();
                     const expire = 4102329600;//2099-12-31 到期时间
@@ -267,8 +267,7 @@ export default {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
                                     
-                                    // [修改] 纯国旗名称，去掉了数字和特殊空格
-                                    // 如果客户端显示重复节点，那是客户端的行为（通常会自动加序号）
+                                    // [修改] 纯国旗名称
                                     const 随机国旗 = 国家国旗列表[Math.floor(Math.random() * 国家国旗列表.length)];
                                     节点备注 = 随机国旗; 
 
@@ -492,8 +491,7 @@ function 解析魏烈思请求(chunk, token) {
     return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
 }
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper) {
-    // 谷歌学术自动分流逻辑
-    // 如果有学术反代IP，并且访问的是学术网站(仅限 scholar.google.com)，则强制使用代理
+    // [逻辑修改] 只针对 Google Scholar 且存在学术反代IP时，强制走代理
     if (host.includes('scholar.google.com') && 学术反代IP) {
         try {
             // [新增逻辑] 自动判断协议并解析账号密码
@@ -507,18 +505,20 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             } else if (proxyAddress.toLowerCase().startsWith('https://')) {
                  proxyAddress = proxyAddress.substring(8);
             }
-            
-            // 使用脚本内置的解析函数 (支持 user:pass@ip:port)
+           
+            // 使用脚本内置的解析函数
             parsedSocks5Address = await 获取SOCKS5账号(proxyAddress);
-            
+           
+            // 强制启用代理模式
             启用SOCKS5反代 = proxyProtocol;
             启用SOCKS5全局反代 = true;
-            我的SOCKS5账号 = proxyAddress; // 用于日志记录
-            
+            我的SOCKS5账号 = proxyAddress;
+           
         } catch (e) {
             console.log('[学术分流] 代理解析失败:', e);
         }
     }
+    // Cloudflare 等其他所有流量，这里不会命中上面的 if，因此会继续往下走，使用 反代IP (env.PROXYIP)
 
     console.log(JSON.stringify({ configJSON: { 目标地址: host, 目标端口: portNum, 反代IP: 反代IP, 代理类型: 启用SOCKS5反代, 全局代理: 启用SOCKS5全局反代, 代理账号: 我的SOCKS5账号 } }));
     async function connectDirect(address, port, data) {
@@ -884,7 +884,7 @@ function 批量替换域名(内容, host, 每组数量 = 2) {
     });
 }
 
-async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
+async function 读取config_JSON(env, hostname, userID, path, 重置配置 = false) {
     const host = 随机替换通配符(hostname);
     const 初始化开始时间 = performance.now();
     const 默认配置JSON = {
@@ -894,7 +894,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         协议类型: "v" + "le" + "ss",
         传输协议: "ws",
         跳过证书验证: true,
-        启用0RTT: true,
+        启用0RTT: false,
         TLS分片: null,
         随机路径: false,
         优选订阅生成: {
@@ -911,7 +911,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         },
         订阅转换配置: {
             SUBAPI: "https://SUBAPI.cmliussss.net",
-            SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
+            SUBCONFIG: "https://raw.githubusercontent.com/cmliu/ACL4SSR/refs/heads/main/Clash/config/ACL4SSR_Online_Mini_MultiMode_CF.ini",
             SUBEMOJI: false,
         },
         反代: {
@@ -957,7 +957,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 
     config_JSON.HOST = host;
     config_JSON.UUID = userID;
-    config_JSON.PATH = config_JSON.反代.SOCKS5.启用 ? ('/' + config_JSON.反代.SOCKS5.启用 + (config_JSON.反代.SOCKS5.全局 ? '://' : '=') + config_JSON.反代.SOCKS5.账号) : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`);
+    config_JSON.PATH = path ? (path.startsWith('/') ? path : '/' + path) : (config_JSON.反代.SOCKS5.启用 ? ('/' + config_JSON.反代.SOCKS5.启用 + (config_JSON.反代.SOCKS5.全局 ? '://' : '=') + config_JSON.反代.SOCKS5.账号) : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`));
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
     config_JSON.LINK = `${config_JSON.协议类型}://${userID}@${host}:443?security=tls&type=${config_JSON.传输协议}&host=${host}&sni=${host}&path=${encodeURIComponent(config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
     config_JSON.优选订阅生成.TOKEN = await MD5MD5(hostname + userID);
