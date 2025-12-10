@@ -402,29 +402,24 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
                 const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
                 const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
                 
-                // [重试机制] 尝试最多3次，每次随机选择一个代理
-                const maxRetries = 3;
+                // [重试机制] 尝试最多3次，每次随机选择不同的代理
+                const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
                 const triedProxies = new Set();
                 
-                for (let attempt = 0; attempt < maxRetries && triedProxies.size < GOOGLE_SCHOLAR_PROXIES.length; attempt++) {
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
                     try {
-                        // 随机选择一个未尝试过的代理
-                        let randomAIP;
-                        do {
-                            randomAIP = GOOGLE_SCHOLAR_PROXIES[Math.floor(Math.random() * GOOGLE_SCHOLAR_PROXIES.length)];
-                        } while (triedProxies.has(randomAIP) && triedProxies.size < GOOGLE_SCHOLAR_PROXIES.length);
+                        // 从未尝试过的代理中随机选择一个
+                        const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
+                        if (availableProxies.length === 0) break; // 所有代理都已尝试
                         
+                        const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
                         triedProxies.add(randomAIP);
                         
                         await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
                         return; // 成功连接，立即返回
                     } catch (e) {
                         console.error(`Scholar 代理连接失败 (尝试 ${attempt + 1}/${maxRetries}): ${e.message}`);
-                        // 如果不是最后一次尝试，继续下一次重试
-                        if (attempt < maxRetries - 1 && triedProxies.size < GOOGLE_SCHOLAR_PROXIES.length) {
-                            continue;
-                        }
-                        // 如果是最后一次尝试失败，记录错误并继续（会走到下面的常规TCP逻辑）
+                        // 继续下一次重试
                     }
                 }
                 // 所有Scholar代理都失败后，记录日志
