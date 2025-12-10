@@ -422,7 +422,7 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
                         // 继续下一次重试
                     }
                 }
-                // 所有Scholar代理都失败后，记录日志
+                // 所有Scholar代理都失败后，记录日志并继续执行下方的常规TCP连接逻辑
                 console.error('All Scholar proxies failed, falling back to regular TCP connection');
             }
             // -----------------------------------------------------------
