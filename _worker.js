@@ -1,7 +1,10 @@
 import { connect } from "cloudflare:sockets";
 
 // [配置] 默认学术代理 IP (会被后台变量 ACADEMIC_PROXY 覆盖)
-let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {}, 学术反代IP = '';
+let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
+
+// [新增] 学术反代池，用于负载均衡
+let 学术反代IP池 = []; 
 
 // [修改] 只保留 scholar.google.com，其他全部删除
 let SOCKS5白名单 = ['scholar.google.com'];
@@ -33,15 +36,14 @@ export default {
             反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
         } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         
-        // 读取 ACADEMIC_PROXY 变量
+        // [修改] 读取 ACADEMIC_PROXY 变量并预处理为数组 (实现负载均衡准备)
         if (env.ACADEMIC_PROXY) {
             try {
-                const academicIPs = await 整理成数组(env.ACADEMIC_PROXY);
-                if (academicIPs.length > 0) {
-                    学术反代IP = academicIPs[Math.floor(Math.random() * academicIPs.length)];
-                }
+                // 支持换行或逗号分隔
+                学术反代IP池 = await 整理成数组(env.ACADEMIC_PROXY);
             } catch (e) {
                 console.log('解析 ACADEMIC_PROXY 失败:', e);
+                学术反代IP池 = [];
             }
         }
 
@@ -256,7 +258,7 @@ export default {
                             const 优选API的IP = await 请求优选API(优选API);
                             const 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
                             
-                            // [重点修改] 节点生成逻辑
+                            // 节点生成逻辑
                             订阅内容 = 完整优选IP.map((原始地址, index) => {
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
                                 const match = 原始地址.match(regex);
@@ -266,9 +268,6 @@ export default {
                                 if (match) {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
-                                    
-                                    // [修改] 纯国旗名称，去掉了数字和特殊空格
-                                    // 如果客户端显示重复节点，那是客户端的行为（通常会自动加序号）
                                     const 随机国旗 = 国家国旗列表[Math.floor(Math.random() * 国家国旗列表.length)];
                                     节点备注 = 随机国旗; 
 
@@ -491,36 +490,45 @@ function 解析魏烈思请求(chunk, token) {
     if (!hostname) return { hasError: true, message: `Invalid address: ${addressType}` };
     return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
 }
+
+// [修改] 核心转发逻辑：引入局部代理配置，避免污染全局变量
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper) {
-    // 谷歌学术自动分流逻辑
-    // 如果有学术反代IP，并且访问的是学术网站(仅限 scholar.google.com)，则强制使用代理
-    if (host.includes('scholar.google.com') && 学术反代IP) {
+    // 1. 定义局部变量，彻底隔离，不影响全局设置
+    let currentProxyConfig = {
+        useProxy: false,
+        protocol: '', 
+        address: '', 
+        username: '',
+        password: ''
+    };
+
+    // 2. 谷歌学术专用分流逻辑
+    // 只有 scholar.google.com 且 存在学术代理池时，才触发
+    if (host.includes('scholar.google.com') && 学术反代IP池.length > 0) {
+        // [高效负载均衡] 随机抽取 O(1)
+        const node = 学术反代IP池[Math.floor(Math.random() * 学术反代IP池.length)];
+        
+        let rawAddr = node;
+        let protocol = 'socks5'; // 默认
+        if (node.toLowerCase().startsWith('http://')) { protocol = 'http'; rawAddr = node.slice(7); }
+        else if (node.toLowerCase().startsWith('https://')) { protocol = 'http'; rawAddr = node.slice(8); }
+        else if (node.toLowerCase().startsWith('socks5://')) { protocol = 'socks5'; rawAddr = node.slice(9); }
+
         try {
-            // [新增逻辑] 自动判断协议并解析账号密码
-            let proxyProtocol = 'http';
-            let proxyAddress = 学术反代IP;
-            if (proxyAddress.toLowerCase().startsWith('socks5://')) {
-                proxyProtocol = 'socks5';
-                proxyAddress = proxyAddress.substring(9);
-            } else if (proxyAddress.toLowerCase().startsWith('http://')) {
-                 proxyAddress = proxyAddress.substring(7);
-            } else if (proxyAddress.toLowerCase().startsWith('https://')) {
-                 proxyAddress = proxyAddress.substring(8);
-            }
-            
-            // 使用脚本内置的解析函数 (支持 user:pass@ip:port)
-            parsedSocks5Address = await 获取SOCKS5账号(proxyAddress);
-            
-            启用SOCKS5反代 = proxyProtocol;
-            启用SOCKS5全局反代 = true;
-            我的SOCKS5账号 = proxyAddress; // 用于日志记录
-            
+            const parsed = await 获取SOCKS5账号(rawAddr); // 解析 user:pass@ip:port
+            currentProxyConfig = {
+                useProxy: true,
+                protocol: protocol,
+                address: parsed.hostname + ':' + parsed.port,
+                username: parsed.username,
+                password: parsed.password
+            };
+            // console.log(`[学术命中] ${host} -> ${currentProxyConfig.address}`);
         } catch (e) {
-            console.log('[学术分流] 代理解析失败:', e);
+            console.log('学术代理参数解析失败，降级直连', e);
         }
     }
 
-    console.log(JSON.stringify({ configJSON: { 目标地址: host, 目标端口: portNum, 反代IP: 反代IP, 代理类型: 启用SOCKS5反代, 全局代理: 启用SOCKS5全局反代, 代理账号: 我的SOCKS5账号 } }));
     async function connectDirect(address, port, data) {
         const remoteSock = connect({ hostname: address, port: port });
         const writer = remoteSock.writable.getWriter();
@@ -528,9 +536,32 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         writer.releaseLock();
         return remoteSock;
     }
+
     async function connecttoPry() {
         let newSocket;
-        if (启用SOCKS5反代 === 'socks5') {
+        // 优先检查是否命中学术分流策略 (局部配置)
+        if (currentProxyConfig.useProxy) {
+            // 解析地址端口
+            const lastColon = currentProxyConfig.address.lastIndexOf(':');
+            const proxyHost = currentProxyConfig.address.substring(0, lastColon);
+            const proxyPort = parseInt(currentProxyConfig.address.substring(lastColon + 1));
+            
+            // 构造配置对象传给连接函数，避免使用全局变量
+            const proxyCtx = { 
+                username: currentProxyConfig.username, 
+                password: currentProxyConfig.password, 
+                hostname: proxyHost, 
+                port: proxyPort 
+            };
+
+            if (currentProxyConfig.protocol === 'socks5') {
+                newSocket = await socks5Connect(host, portNum, rawData, proxyCtx);
+            } else {
+                newSocket = await httpConnect(host, portNum, rawData, proxyCtx);
+            }
+        } 
+        // 否则回退到全局原有逻辑 (兼容旧功能)
+        else if (启用SOCKS5反代 === 'socks5') {
             newSocket = await socks5Connect(host, portNum, rawData);
         } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
             newSocket = await httpConnect(host, portNum, rawData);
@@ -540,6 +571,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                 newSocket = await connectDirect(反代IP地址, 反代IP端口, rawData);
             } catch { newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData) }
         }
+        
         remoteConnWrapper.socket = newSocket;
         newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
         connectStreams(newSocket, ws, respHeader, null);
@@ -553,9 +585,14 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         }
     } else {
         try {
-            const initialSocket = await connectDirect(host, portNum, rawData);
-            remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, connecttoPry);
+            // 如果命中了学术代理，直接走 connecttoPry，跳过直连尝试
+            if (currentProxyConfig.useProxy) {
+                 await connecttoPry();
+            } else {
+                const initialSocket = await connectDirect(host, portNum, rawData);
+                remoteConnWrapper.socket = initialSocket;
+                connectStreams(initialSocket, ws, respHeader, connecttoPry);
+            }
         } catch (err) {
             await connecttoPry();
         }
@@ -681,8 +718,9 @@ function base64ToArray(b64Str) {
     }
 }
 ////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+// [修改] 增加 customConfig 参数，允许传入局部配置，不依赖全局变量
+async function socks5Connect(targetHost, targetPort, initialData, customConfig = null) {
+    const { username, password, hostname, port } = customConfig || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -717,8 +755,9 @@ async function socks5Connect(targetHost, targetPort, initialData) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+// [修改] 增加 customConfig 参数
+async function httpConnect(targetHost, targetPort, initialData, customConfig = null) {
+    const { username, password, hostname, port } = customConfig || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
