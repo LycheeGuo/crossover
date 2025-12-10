@@ -323,7 +323,7 @@ export default {
         } else if (管理员密码) {// ws代理
             // 解析本次请求的代理参数 (防止并发污染)
             const proxyParams = await 反代参数获取(request);
-            return await 处理WS请求(request, userID, proxyParams);
+            return await 处理WS请求(request, userID, proxyParams, 当前反代IP);
         }
 
         let 伪装页URL = env.URL || 'nginx';
@@ -347,7 +347,7 @@ export default {
 };
 
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-async function 处理WS请求(request, yourUUID, proxyParams) {
+async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();
@@ -359,12 +359,6 @@ async function 处理WS请求(request, yourUUID, proxyParams) {
     
     // [反代] 获取全局代理参数
     const { 启用SOCKS5反代, 启用SOCKS5全局反代, parsedSocks5Address } = proxyParams;
-    let defaultProxyIP = ''; 
-    // 注意：defaultProxyIP 的获取逻辑在主函数中，这里为了简化参数传递，
-    // 我们如果需要使用普通ProxyIP，可以重新获取一次或者作为参数传入。
-    // 为保持函数签名简洁，这里我们简单重新计算一次 PrOxYIp.CmLiUsSsS.nEt 作为默认
-    // 实际生产中最好从调用方传入，但此处影响不大。
-    defaultProxyIP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
 
     readable.pipeTo(new WritableStream({
         async write(chunk) {
@@ -402,20 +396,34 @@ async function 处理WS请求(request, yourUUID, proxyParams) {
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
-            // [核心分流逻辑] - 拦截 Scholar (使用硬编码列表)
+            // [核心分流逻辑] - 拦截 Scholar (使用硬编码列表 + 重试机制)
             // -----------------------------------------------------------
             if (hostname.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
-                try {
-                    // [负载均衡] 随机选择一个代理
-                    const randomAIP = GOOGLE_SCHOLAR_PROXIES[Math.floor(Math.random() * GOOGLE_SCHOLAR_PROXIES.length)];
-                    const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
-                    const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
-                    
-                    await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
-                    return; 
-                } catch (e) {
-                    console.error(`Scholar 代理连接失败: ${e.message}`);
+                const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
+                const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
+                
+                // [重试机制] 尝试最多3次，每次随机选择不同的代理
+                const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
+                const triedProxies = new Set();
+                
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        // 从未尝试过的代理中随机选择一个
+                        const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
+                        if (availableProxies.length === 0) break; // 所有代理都已尝试
+                        
+                        const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
+                        triedProxies.add(randomAIP);
+                        
+                        await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
+                        return; // 成功连接，立即返回
+                    } catch (e) {
+                        console.error(`Scholar 代理连接失败 (尝试 ${attempt + 1}/${maxRetries}): ${e.message}`);
+                        // 继续下一次重试
+                    }
                 }
+                // 所有Scholar代理都失败后，记录日志并继续执行下方的常规TCP连接逻辑
+                console.error('All Scholar proxies failed, falling back to regular TCP connection');
             }
             // -----------------------------------------------------------
 
