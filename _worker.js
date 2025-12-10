@@ -5,7 +5,6 @@ const Pages静态页面 = 'https://edt-pages.github.io';
 const TARGET_DOMAIN = 'scholar.google.com'; // 谷歌学术域名匹配
 
 // [配置] 默认学术代理 IP (会被后台变量 ACADEMIC_PROXY 覆盖)
-// 注意：不再使用全局变量存储状态，只存储配置
 let config_JSON;
 
 // [新增] 自定义国旗列表
@@ -36,6 +35,7 @@ export default {
             const proxyIPs = await 整理成数组(env.PROXYIP);
             当前反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
         } else {
+            // 如果没设置变量，使用默认的生成逻辑
             当前反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         }
         
@@ -54,7 +54,7 @@ export default {
 
         const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
         
-        // Websocket 请求：直接传递 IP 配置，不再依赖全局变量
+        // Websocket 请求：直接传递 IP 配置
         if (!upgradeHeader || upgradeHeader !== 'websocket') {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
@@ -114,7 +114,6 @@ export default {
                     }
                     return new Response(JSON.stringify({ success: false, data: [] }, null, 2), { status: 403, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 } else if (访问路径 === 'admin/check') {
-                    // 检查代理可用性 (注意：这里使用临时的连接测试，不影响主逻辑)
                     let 检测代理响应;
                     if (url.searchParams.has('socks5')) {
                         检测代理响应 = await SOCKS5可用性验证('socks5', url.searchParams.get('socks5'));
@@ -409,7 +408,7 @@ async function 处理WS请求(request, yourUUID, defaultProxyIP, academicProxyIP
     return new Response(null, { status: 101, webSocket: clientSock });
 }
 
-// ---------------------- 核心分流逻辑 (防污染/学术加速) ----------------------
+// ---------------------- 核心分流逻辑 (修复普通流量兜底) ----------------------
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, defaultProxyIP, academicProxyIP) {
     let useAcademicProxy = false;
     let currentProxyAddress = null;
@@ -421,23 +420,41 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         currentProxyAddress = academicProxyIP;
     }
 
-    // [逻辑分支A] 普通流量 / 直连 / 优选IP
+    // [逻辑分支A] 普通流量 / 直连 / 优选IP (包含修复的兜底逻辑)
     async function connectDirect(address, port, data) {
-        // 如果不是学术网站，且有默认优选IP (env.PROXYIP)，则尝试使用它
+        let proxyAddress = address; // 默认为直连域名
+        
+        // 尝试使用优选IP覆盖
         if (!useAcademicProxy && defaultProxyIP) {
             try {
                 const [优选IP地址, 优选端口] = await 解析地址端口(defaultProxyIP);
-                address = 优选IP地址;
-                // 如果是IP优选，端口通常维持原样，或者根据优选IP的端口逻辑（这里简化为使用解析出的地址）
-                // 注意：在CF Worker中，connect({hostname: ip}) 行为取决于CF网络
+                proxyAddress = 优选IP地址;
             } catch (e) {}
         }
         
-        const remoteSock = connect({ hostname: address, port: port });
-        const writer = remoteSock.writable.getWriter();
-        await writer.write(data);
-        writer.releaseLock();
-        return remoteSock;
+        // 第一次尝试连接
+        try {
+            const remoteSock = connect({ hostname: proxyAddress, port: port });
+            const writer = remoteSock.writable.getWriter();
+            await writer.write(data);
+            writer.releaseLock();
+            return remoteSock;
+        } catch (err) {
+            // [关键修复] 如果第一次连接失败，尝试兜底IP (恢复原脚本逻辑)
+            // 这对解决"所有普通网站都挂了"非常关键，因为默认生成的优选IP可能不稳定
+            console.log('直连/优选IP失败，尝试兜底IP');
+            try {
+                const fallbackIP = atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='); // 解码后为 PROXYIP.tp1.090227.xyz
+                const [fbIP, fbPort] = await 解析地址端口(fallbackIP);
+                const remoteSock = connect({ hostname: fbIP, port: port });
+                const writer = remoteSock.writable.getWriter();
+                await writer.write(data);
+                writer.releaseLock();
+                return remoteSock;
+            } catch (fallbackErr) {
+                throw fallbackErr; // 如果兜底也失败，抛出异常
+            }
+        }
     }
 
     // [逻辑分支B] 学术代理 (SOCKS5/HTTP)
@@ -487,7 +504,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             remoteConnWrapper.socket = initialSocket;
             connectStreams(initialSocket, ws, respHeader, null);
         } catch (err) {
-            console.error('直连失败:', err);
+            console.error('直连及兜底均失败:', err);
             ws.close();
         }
     }
@@ -1151,35 +1168,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
     return Array.from(results);
 }
 
-async function 获取SOCKS5账号(address) {
-    if (address.includes('@')) {
-        const lastAtIndex = address.lastIndexOf('@');
-        let userPassword = address.substring(0, lastAtIndex).replaceAll('%3D', '=');
-        const base64Regex = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i;
-        if (base64Regex.test(userPassword) && !userPassword.includes(':')) userPassword = atob(userPassword);
-        address = `${userPassword}@${address.substring(lastAtIndex + 1)}`;
-    }
-    const atIndex = address.lastIndexOf("@");
-    const [hostPart, authPart] = atIndex === -1 ? [address, undefined] : [address.substring(atIndex + 1), address.substring(0, atIndex)];
-
-    let username, password;
-    if (authPart) {
-        [username, password] = authPart.split(":");
-    }
-
-    let hostname, port;
-    if (hostPart.includes("]:")) { 
-        [hostname, port] = [hostPart.split("]:")[0] + "]", Number(hostPart.split("]:")[1].replace(/[^\d]/g, ''))];
-    } else if (hostPart.startsWith("[")) { 
-        [hostname, port] = [hostPart, 80];
-    } else { 
-        const parts = hostPart.split(":");
-        [hostname, port] = parts.length === 2 ? [parts[0], Number(parts[1].replace(/[^\d]/g, ''))] : [hostPart, 80];
-    }
-
-    if (isNaN(port)) throw new Error('无效的 SOCKS 地址格式：端口号必须是数字');
-
-    return { username, password, hostname, port };
+async function 反代参数获取(request) {
+    // 占位函数，保持兼容性，逻辑已移至主流程
 }
 
 async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
@@ -1230,6 +1220,7 @@ async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
         const pages = sum(acc.pagesFunctionsInvocationsAdaptiveGroups);
         const workers = sum(acc.workersInvocationsAdaptive);
         const total = pages + workers;
+        console.log(`统计结果 - Pages: ${pages}, Workers: ${workers}, 总计: ${total}`);
         return { success: true, pages, workers, total };
 
     } catch (error) {
