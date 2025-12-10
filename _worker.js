@@ -1,16 +1,9 @@
 import { connect } from "cloudflare:sockets";
 
-// [配置] 常量定义
+// [全局变量] - 仅供普通流量使用，Scholar 流量完全不碰这些
+let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
+let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
-const TARGET_DOMAIN = 'scholar.google.com'; // 谷歌学术域名匹配
-
-// [配置] 默认学术代理 IP (会被后台变量 ACADEMIC_PROXY 覆盖)
-let config_JSON;
-
-// [新增] 自定义国旗列表
-const 国家国旗列表 = [
-    '🇺🇸 US', '🇭🇰 HK', '🇯🇵 JP', '🇸🇬 SG', '🇹🇼 TW', '🇬🇧 UK', '🇰🇷 KR', '🇩🇪 DE', '🇫🇷 FR'
-];
 
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
@@ -26,50 +19,30 @@ export default {
         const userID = (envUUID && uuidRegex.test(envUUID)) ? envUUID.toLowerCase() : [userIDMD5.slice(0, 8), userIDMD5.slice(8, 12), '4' + userIDMD5.slice(13, 16), userIDMD5.slice(16, 20), userIDMD5.slice(20)].join('-');
         const host = env.HOST ? env.HOST.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : url.hostname;
         
-        // --- [修改] IP 配置处理 (局部变量，防止并发污染) ---
-        let 当前反代IP = '';
-        let 当前学术IP = '';
+        // 提取 AIP 变量，直接传递
+        const AIP_Proxy_List = env.AIP || '';
 
-        // 1. 处理普通反代IP (用于非学术流量)
+        // [普通流量逻辑] 反代IP处理
         if (env.PROXYIP) {
             const proxyIPs = await 整理成数组(env.PROXYIP);
-            当前反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
-        } else {
-            // 如果没设置变量，使用默认的生成逻辑
-            当前反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
-        }
+            反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
+        } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         
-        // 2. 处理学术反代IP (用于 scholar.google.com)
-        if (env.ACADEMIC_PROXY) {
-            try {
-                const academicIPs = await 整理成数组(env.ACADEMIC_PROXY);
-                if (academicIPs.length > 0) {
-                    当前学术IP = academicIPs[Math.floor(Math.random() * academicIPs.length)];
-                }
-            } catch (e) {
-                console.log('解析 ACADEMIC_PROXY 失败:', e);
-            }
-        }
-        // ----------------------------------------------------
-
         const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
         
-        // Websocket 请求：直接传递 IP 配置
+        if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
+
         if (!upgradeHeader || upgradeHeader !== 'websocket') {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
             if (!env.KV) return fetch(Pages静态页面 + '/noKV').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
             const 访问路径 = url.pathname.slice(1).toLowerCase();
             const 区分大小写访问路径 = url.pathname.slice(1);
-            
-            // 快速订阅
             if (访问路径 === 加密秘钥 && 加密秘钥 !== '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改') {
                 const params = new URLSearchParams(url.search);
                 params.set('token', await MD5MD5(host + userID));
                 return new Response('重定向中...', { status: 302, headers: { 'Location': `/sub?${params.toString()}` } });
-            } 
-            // 登录
-            else if (访问路径 === 'login') {
+            } else if (访问路径 === 'login') {
                 const cookies = request.headers.get('Cookie') || '';
                 const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
                 if (authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
@@ -84,13 +57,10 @@ export default {
                     }
                 }
                 return fetch(Pages静态页面 + '/login');
-            } 
-            // 管理面板
-            else if (访问路径 == 'admin' || 访问路径.startsWith('admin/')) {
+            } else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {
                 const cookies = request.headers.get('Cookie') || '';
                 const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
                 if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
-                
                 if (访问路径 === 'admin/log.json') {
                     const 读取日志内容 = await env.KV.get('log.json') || '[]';
                     return new Response(读取日志内容, { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -99,7 +69,8 @@ export default {
                         const Usage_JSON = await getCloudflareUsage(url.searchParams.get('Email'), url.searchParams.get('GlobalAPIKey'), url.searchParams.get('AccountID'), url.searchParams.get('APIToken'));
                         return new Response(JSON.stringify(Usage_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
                     } catch (err) {
-                        return new Response(JSON.stringify({ msg: '查询请求量失败: ' + err.message, error: err.message }, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                        const errorResponse = { msg: '查询请求量失败，失败原因：' + err.message, error: err.message };
+                        return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                     }
                 } else if (区分大小写访问路径 === 'admin/getADDAPI') {
                     if (url.searchParams.get('url')) {
@@ -109,7 +80,8 @@ export default {
                             const 优选API的IP = await 请求优选API([待验证优选URL], url.searchParams.get('port') || '443');
                             return new Response(JSON.stringify({ success: true, data: 优选API的IP }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         } catch (err) {
-                            return new Response(JSON.stringify({ msg: '验证优选API失败: ' + err.message, error: err.message }, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                            const errorResponse = { msg: '验证优选API失败，失败原因：' + err.message, error: err.message };
+                            return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
                     }
                     return new Response(JSON.stringify({ success: false, data: [] }, null, 2), { status: 403, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -125,16 +97,17 @@ export default {
                     return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 }
 
-                config_JSON = await 读取config_JSON(env, host, userID);
+                config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
 
                 if (访问路径 === 'admin/init') {
                     try {
-                        config_JSON = await 读取config_JSON(env, host, userID, true);
+                        config_JSON = await 读取config_JSON(env, host, userID, env.PATH, true);
                         ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Init_Config', config_JSON));
                         config_JSON.init = '配置已重置为默认值';
                         return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                     } catch (err) {
-                        return new Response(JSON.stringify({ msg: '配置重置失败: ' + err.message, error: err.message }, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                        const errorResponse = { msg: '配置重置失败，失败原因：' + err.message, error: err.message };
+                        return new Response(JSON.stringify(errorResponse, null, 2), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                     }
                 } else if (request.method === 'POST') {
                     if (访问路径 === 'admin/config.json') {
@@ -148,7 +121,7 @@ export default {
                             return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
                     } else if (访问路径 === 'admin/cf.json') {
-                         try {
+                        try {
                             const newConfig = await request.json();
                             const CF_JSON = { Email: null, GlobalAPIKey: null, AccountID: null, APIToken: null };
                             if (!newConfig.init || newConfig.init !== true) {
@@ -173,7 +146,7 @@ export default {
                             return new Response(JSON.stringify({ error: '保存配置失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
                     } else if (访问路径 === 'admin/tg.json') {
-                         try {
+                        try {
                             const newConfig = await request.json();
                             if (newConfig.init && newConfig.init === true) {
                                 const TG_JSON = { BotToken: null, ChatID: null };
@@ -216,10 +189,10 @@ export default {
             } else if (访问路径 === 'sub') {
                 const 订阅TOKEN = await MD5MD5(host + userID);
                 if (url.searchParams.get('token') === 订阅TOKEN) {
-                    config_JSON = await 读取config_JSON(env, host, userID);
+                    config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
                     ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_SUB', config_JSON));
                     const ua = UA.toLowerCase();
-                    const expire = 4102329600;
+                    const expire = 4102329600;//2099-12-31 到期时间
                     const now = Date.now();
                     const today = new Date(now);
                     today.setHours(0, 0, 0, 0);
@@ -264,29 +237,34 @@ export default {
                             else 优选IP.push(元素);
                         }
                         const 其他节点LINK = 其他节点.join('\n') + '\n';
-                        if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { 
+                        if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { // 本地生成订阅
                             const 优选API的IP = await 请求优选API(优选API);
                             const 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
-                            
-                            订阅内容 = 完整优选IP.map((原始地址, index) => {
+                            订阅内容 = 完整优选IP.map(原始地址 => {
+                                // 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
+                                // 示例: 
+                                //    - 域名: hj.xmm1993.top:2096#备注 或 example.com
+                                //    - IPv4: 166.0.188.128:443#Los Angeles 或 166.0.188.128
+                                //    - IPv6: [2606:4700::]:443#CMCC 或 [2606:4700::]
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
                                 const match = 原始地址.match(regex);
 
                                 let 节点地址, 节点端口 = "443", 节点备注;
 
                                 if (match) {
-                                    节点地址 = match[1];  
-                                    节点端口 = match[2] || "443";  
-                                    const 随机国旗 = 国家国旗列表[Math.floor(Math.random() * 国家国旗列表.length)];
-                                    节点备注 = 随机国旗; 
+                                    节点地址 = match[1];  // IP地址或域名(可能带方括号)
+                                    节点端口 = match[2] || "443";  // 端口,默认443
+                                    节点备注 = match[3] || 节点地址;  // 备注,默认为地址本身
                                 } else {
+                                    // 不规范的格式，跳过处理返回null
+                                    console.warn(`[订阅内容] 不规范的IP格式已忽略: ${原始地址}`);
                                     return null;
                                 }
                                 const 节点HOST = 随机替换通配符(host);
                                 return `${协议类型}://${config_JSON.UUID}@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议}&host=${节点HOST}&sni=${节点HOST}&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
                             }).filter(item => item !== null).join('\n');
                             订阅内容 = btoa(其他节点LINK + 订阅内容);
-                        } else { 
+                        } else { // 优选订阅生成器
                             let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
                             优选订阅生成器HOST = 优选订阅生成器HOST && !/^https?:\/\//i.test(优选订阅生成器HOST) ? `https://${优选订阅生成器HOST}` : 优选订阅生成器HOST;
                             const 优选订阅生成器URL = `${优选订阅生成器HOST}/sub?host=example.com&${协议类型 === ('v' + 'le' + 'ss') ? 'uuid' : 'pw'}=00000000-0000-4000-8000-000000000000&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&type=${config_JSON.传输协议}`;
@@ -298,7 +276,7 @@ export default {
                                 return new Response('优选订阅生成器异常：' + error.message, { status: 403 });
                             }
                         }
-                    } else { 
+                    } else { // 订阅转换
                         const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
                         try {
                             const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel(https://github.com/cmliu/edge' + 'tunnel)' } });
@@ -324,9 +302,10 @@ export default {
                 }
                 return new Response('无效的订阅TOKEN', { status: 403 });
             } else if (访问路径 === 'locations') return fetch(new Request('https://speed.cloudflare.com/locations'));
-        } else if (管理员密码) {// ws代理
-            // [关键修改] 调用WS处理时，传入当前解析出的IP配置
-            return await 处理WS请求(request, userID, 当前反代IP, 当前学术IP);
+        } else if (管理员密码) { // WS 代理入口
+            await 反代参数获取(request);
+            // 将 AIP 列表传入处理函数
+            return await 处理WS请求(request, userID, AIP_Proxy_List);
         }
 
         let 伪装页URL = env.URL || 'nginx';
@@ -350,8 +329,8 @@ export default {
 };
 
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-// [关键修改] 接收 defaultProxyIP 和 academicProxyIP 参数
-async function 处理WS请求(request, yourUUID, defaultProxyIP, academicProxyIP) {
+// 核心修改：接收 AIP_Var
+async function 处理WS请求(request, yourUUID, AIP_Var) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();
@@ -360,6 +339,10 @@ async function 处理WS请求(request, yourUUID, defaultProxyIP, academicProxyIP
     const earlyData = request.headers.get('sec-websocket-protocol') || '';
     const readable = makeReadableStr(serverSock, earlyData);
     let 判断是否是木马 = null;
+    
+    // AIP 列表解析一次即可
+    const AIP_List = AIP_Var ? await 整理成数组(AIP_Var) : [];
+
     readable.pipeTo(new WritableStream({
         async write(chunk) {
             if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
@@ -382,24 +365,49 @@ async function 处理WS请求(request, yourUUID, defaultProxyIP, academicProxyIP
                 return;
             }
 
+            let parsedInfo;
             if (判断是否是木马) {
-                const { port, hostname, rawClientData } = 解析木马请求(chunk, yourUUID);
-                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                // [关键修改] 传入IP配置
-                await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, defaultProxyIP, academicProxyIP);
+                parsedInfo = 解析木马请求(chunk, yourUUID);
             } else {
-                const { port, hostname, rawIndex, version, isUDP } = 解析魏烈思请求(chunk, yourUUID);
-                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                if (isUDP) {
-                    if (port === 53) isDnsQuery = true;
-                    else throw new Error('UDP is not supported');
-                }
-                const respHeader = new Uint8Array([version[0], 0]);
-                const rawData = chunk.slice(rawIndex);
-                if (isDnsQuery) return forwardataudp(rawData, serverSock, respHeader);
-                // [关键修改] 传入IP配置
-                await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, defaultProxyIP, academicProxyIP);
+                parsedInfo = 解析魏烈思请求(chunk, yourUUID);
             }
+
+            const { hasError, message, port, hostname, rawIndex, version, isUDP, rawClientData } = parsedInfo;
+
+            if (hasError) throw new Error(message);
+            if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+
+            // -----------------------------------------------------------
+            // [极速分流逻辑] - 在进入任何通用逻辑之前，直接拦截 Scholar
+            // -----------------------------------------------------------
+            if (hostname.includes('scholar.google.com') && AIP_List.length > 0) {
+                try {
+                    // 随机选一个代理
+                    const randomAIP = AIP_List[Math.floor(Math.random() * AIP_List.length)];
+                    const cleanAIP = randomAIP.replace(/^https?:\/\//, '').replace(/^socks5:\/\//, ''); // 简单清理
+                    
+                    // 专门的 Scholar 连接函数 - 绝对无污染
+                    await connectToScholarProxy(hostname, port, 判断是否是木马 ? rawClientData : chunk.slice(rawIndex), serverSock, 判断是否是木马 ? null : new Uint8Array([version[0], 0]), remoteConnWrapper, cleanAIP);
+                    return; // 结束，不执行后续逻辑
+                } catch (e) {
+                    console.error(`Scholar 代理连接失败: ${e.message}`);
+                    // 失败了？ 这里可以选择抛出错误，或者降级到直连（看你需求，目前逻辑是继续走下面）
+                }
+            }
+            // -----------------------------------------------------------
+
+            if (!判断是否是木马 && isUDP) {
+                if (port === 53) isDnsQuery = true;
+                else throw new Error('UDP is not supported');
+            }
+
+            const rawPayload = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
+            const respHeader = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
+
+            if (isDnsQuery) return forwardataudp(rawPayload, serverSock, respHeader);
+            
+            // 原有通用连接逻辑
+            await forwardataTCP(hostname, port, rawPayload, serverSock, respHeader, remoteConnWrapper);
         },
     })).catch((err) => {
         // console.error('Readable pipe error:', err);
@@ -408,107 +416,96 @@ async function 处理WS请求(request, yourUUID, defaultProxyIP, academicProxyIP
     return new Response(null, { status: 101, webSocket: clientSock });
 }
 
-// ---------------------- 核心分流逻辑 (修复普通流量兜底) ----------------------
-async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, defaultProxyIP, academicProxyIP) {
-    let useAcademicProxy = false;
-    let currentProxyAddress = null;
-
-    // 1. 判断是否为谷歌学术 (支持 scholar.google.com 和 scholar.google.com.hk 等)
-    // 且必须在环境变量配置了 ACADEMIC_PROXY 才会启用
-    if (host.includes(TARGET_DOMAIN) && academicProxyIP) {
-        useAcademicProxy = true;
-        currentProxyAddress = academicProxyIP;
-    }
-
-    // [逻辑分支A] 普通流量 / 直连 / 优选IP (包含修复的兜底逻辑)
-    async function connectDirect(address, port, data) {
-        let proxyAddress = address; // 默认为直连域名
-        
-        // 尝试使用优选IP覆盖
-        if (!useAcademicProxy && defaultProxyIP) {
-            try {
-                const [优选IP地址, 优选端口] = await 解析地址端口(defaultProxyIP);
-                proxyAddress = 优选IP地址;
-            } catch (e) {}
+// -----------------------------------------------------------------------------
+// [新增] 专用的、独立的 Scholar 代理连接函数 (绝对隔离)
+// -----------------------------------------------------------------------------
+async function connectToScholarProxy(targetHost, targetPort, initialData, ws, respHeader, remoteConnWrapper, proxyAddress) {
+    // 1. 快速解析代理地址 (本地解析，不修改全局变量)
+    let proxyUser, proxyPass, proxyHost, proxyPort;
+    
+    // 简单解析 user:pass@host:port 或 host:port
+    if (proxyAddress.includes('@')) {
+        const parts = proxyAddress.split('@');
+        const auth = parts[0];
+        const addr = parts[1];
+        if (auth.includes(':')) {
+            const authParts = auth.split(':');
+            proxyUser = authParts[0];
+            proxyPass = authParts[1];
+        } else {
+             // 可能是base64
+             const decoded = atob(auth);
+             const authParts = decoded.split(':');
+             proxyUser = authParts[0];
+             proxyPass = authParts[1];
         }
         
-        // 第一次尝试连接
-        try {
-            const remoteSock = connect({ hostname: proxyAddress, port: port });
-            const writer = remoteSock.writable.getWriter();
-            await writer.write(data);
-            writer.releaseLock();
-            return remoteSock;
-        } catch (err) {
-            // [关键修复] 如果第一次连接失败，尝试兜底IP (恢复原脚本逻辑)
-            // 这对解决"所有普通网站都挂了"非常关键，因为默认生成的优选IP可能不稳定
-            console.log('直连/优选IP失败，尝试兜底IP');
-            try {
-                const fallbackIP = atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='); // 解码后为 PROXYIP.tp1.090227.xyz
-                const [fbIP, fbPort] = await 解析地址端口(fallbackIP);
-                const remoteSock = connect({ hostname: fbIP, port: port });
-                const writer = remoteSock.writable.getWriter();
-                await writer.write(data);
-                writer.releaseLock();
-                return remoteSock;
-            } catch (fallbackErr) {
-                throw fallbackErr; // 如果兜底也失败，抛出异常
+        const addrParts = addr.split(':');
+        proxyHost = addrParts[0];
+        proxyPort = parseInt(addrParts[1]);
+    } else {
+        const parts = proxyAddress.split(':');
+        proxyHost = parts[0];
+        proxyPort = parseInt(parts[1]);
+    }
+
+    // 2. 建立 Socket 连接
+    const socket = connect({ hostname: proxyHost, port: proxyPort });
+    const writer = socket.writable.getWriter();
+    const reader = socket.readable.getReader();
+
+    try {
+        // 3. 发送 HTTP CONNECT 握手
+        const authHeader = (proxyUser && proxyPass) 
+            ? `Proxy-Authorization: Basic ${btoa(`${proxyUser}:${proxyPass}`)}\r\n` 
+            : '';
+        const handshake = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${authHeader}User-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
+        
+        await writer.write(new TextEncoder().encode(handshake));
+
+        // 4. 读取代理响应 (简化版，追求速度)
+        let headerBuffer = new Uint8Array(0);
+        let headerComplete = false;
+        
+        // 读取直到找到 \r\n\r\n
+        while (!headerComplete) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error('Proxy closed connection early');
+            
+            // 合并 buffer
+            const newBuffer = new Uint8Array(headerBuffer.length + value.length);
+            newBuffer.set(headerBuffer);
+            newBuffer.set(value, headerBuffer.length);
+            headerBuffer = newBuffer;
+
+            // 检查双换行
+            const text = new TextDecoder().decode(headerBuffer);
+            if (text.includes('\r\n\r\n')) {
+                headerComplete = true;
+                // 检查 200 OK
+                if (!text.includes(' 200 ')) throw new Error(`Proxy Error: ${text.split('\r\n')[0]}`);
             }
         }
-    }
 
-    // [逻辑分支B] 学术代理 (SOCKS5/HTTP)
-    async function connectToAcademicProxy() {
-        // 解析代理协议和地址
-        let proxyProtocol = 'socks5'; 
-        let addressStr = currentProxyAddress;
+        // 5. 连接成功，发送初始数据
+        await writer.write(initialData);
+        writer.releaseLock();
+        reader.releaseLock();
 
-        if (addressStr.startsWith('http://')) {
-            proxyProtocol = 'http';
-            addressStr = addressStr.slice(7);
-        } else if (addressStr.startsWith('https://')) {
-            proxyProtocol = 'http';
-            addressStr = addressStr.slice(8);
-        } else if (addressStr.startsWith('socks5://')) {
-            proxyProtocol = 'socks5';
-            addressStr = addressStr.slice(9);
-        }
+        // 6. 绑定 piping
+        remoteConnWrapper.socket = socket;
+        socket.closed.catch(() => {}).finally(() => closeSocketQuietly(ws));
+        connectStreams(socket, ws, respHeader, null);
 
-        // 解析账号密码 (局部变量，不污染全局)
-        const proxyConfig = await 获取SOCKS5账号(addressStr); 
-        
-        let newSocket;
-        // 传递 config 对象而不是依赖全局变量
-        if (proxyProtocol === 'http') {
-            newSocket = await httpConnect(host, portNum, rawData, proxyConfig);
-        } else {
-            newSocket = await socks5Connect(host, portNum, rawData, proxyConfig);
-        }
-        
-        remoteConnWrapper.socket = newSocket;
-        newSocket.closed.catch(() => {}).finally(() => closeSocketQuietly(ws));
-        connectStreams(newSocket, ws, respHeader, null);
-    }
-
-    // 执行连接
-    if (useAcademicProxy) {
-        try {
-            await connectToAcademicProxy();
-        } catch (err) {
-            console.error('学术代理连接失败:', err);
-            ws.close(); 
-        }
-    } else {
-        try {
-            const initialSocket = await connectDirect(host, portNum, rawData);
-            remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, null);
-        } catch (err) {
-            console.error('直连及兜底均失败:', err);
-            ws.close();
-        }
+    } catch (err) {
+        // 清理资源
+        try { writer.releaseLock(); } catch {}
+        try { reader.releaseLock(); } catch {}
+        try { socket.close(); } catch {}
+        throw err;
     }
 }
+// -----------------------------------------------------------------------------
 
 function 解析木马请求(buffer, passwordPlainText) {
     const sha224Password = sha224(passwordPlainText);
@@ -603,6 +600,50 @@ function 解析魏烈思请求(chunk, token) {
     }
     if (!hostname) return { hasError: true, message: `Invalid address: ${addressType}` };
     return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
+}
+
+// 原始的 TCP 转发逻辑 (供普通流量使用，未修改)
+async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper) {
+    // console.log(JSON.stringify({ configJSON: { 目标地址: host, 目标端口: portNum, 反代IP: 反代IP, 代理类型: 启用SOCKS5反代, 全局代理: 启用SOCKS5全局反代, 代理账号: 我的SOCKS5账号 } }));
+    async function connectDirect(address, port, data) {
+        const remoteSock = connect({ hostname: address, port: port });
+        const writer = remoteSock.writable.getWriter();
+        await writer.write(data);
+        writer.releaseLock();
+        return remoteSock;
+    }
+    async function connecttoPry() {
+        let newSocket;
+        if (启用SOCKS5反代 === 'socks5') {
+            newSocket = await socks5Connect(host, portNum, rawData);
+        } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
+            newSocket = await httpConnect(host, portNum, rawData);
+        } else {
+            try {
+                const [反代IP地址, 反代IP端口] = await 解析地址端口(反代IP);
+                newSocket = await connectDirect(反代IP地址, 反代IP端口, rawData);
+            } catch { newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData) }
+        }
+        remoteConnWrapper.socket = newSocket;
+        newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
+        connectStreams(newSocket, ws, respHeader, null);
+    }
+
+    if (启用SOCKS5反代 && 启用SOCKS5全局反代) {
+        try {
+            await connecttoPry();
+        } catch (err) {
+            throw err;
+        }
+    } else {
+        try {
+            const initialSocket = await connectDirect(host, portNum, rawData);
+            remoteConnWrapper.socket = initialSocket;
+            connectStreams(initialSocket, ws, respHeader, connecttoPry);
+        } catch (err) {
+            await connecttoPry();
+        }
+    }
 }
 
 async function forwardataudp(udpChunk, webSocket, respHeader) {
@@ -723,10 +764,9 @@ function base64ToArray(b64Str) {
         return { error };
     }
 }
-
-////////////////////////////////SOCKS5/HTTP函数 (已参数化)///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData, proxyConfig) {
-    const { username, password, hostname, port } = proxyConfig;
+////////////////////////////////SOCKS5/HTTP函数 (通用)///////////////////////////////////////////////
+async function socks5Connect(targetHost, targetPort, initialData) {
+    const { username, password, hostname, port } = parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -761,8 +801,8 @@ async function socks5Connect(targetHost, targetPort, initialData, proxyConfig) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData, proxyConfig) {
-    const { username, password, hostname, port } = proxyConfig;
+async function httpConnect(targetHost, targetPort, initialData) {
+    const { username, password, hostname, port } = parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
@@ -901,7 +941,7 @@ async function MD5MD5(文本) {
 }
 
 function 随机路径() {
-    const 常用路径目录 = ["#","about","account","acg","act","activity","ad","admin","ads","ajax","album","albums","anime","api","app","apps","archive","archives","article","articles","ask","auth","avatar","bbs","bd","blog","blogs","book","books","bt","buy","cart","category","categories","cb","channel","channels","chat","china","city","class","classify","clip","clips","club","cn","code","collect","collection","comic","comics","community","company","config","contact","content","course","courses","cp","data","detail","details","dh","directory","discount","discuss","dl","dload","doc","docs","document","documents","doujin","download","downloads","drama","edu","en","ep","episode","episodes","event","events","f","faq","favorite","favourites","favs","feedback","file","files","film","films","forum","forums","friend","friends","game","games","gif","go","go.html","go.php","group","groups","help","home","hot","htm","html","image","images","img","index","info","intro","item","items","ja","jp","jump","jump.html","jump.php","jumping","knowledge","lang","lesson","lessons","lib","library","link","links","list","live","lives","login","logout","m","mag","magnet","mall","manhua","map","member","members","message","messages","mobile","movie","movies","music","my","new","news","note","novel","novels","online","order","out","out.html","out.php","outbound","p","page","pages","pay","payment","pdf","photo","photos","pic","pics","picture","pictures","play","player","playlist","post","posts","product","products","program","programs","project","qa","question","rank","ranking","read","readme","redirect","redirect.html","redirect.php","reg","register","res","resource","retrieve","sale","search","season","seasons","section","seller","series","service","services","setting","settings","share","shop","show","shows","site","soft","sort","source","special","star","stars","static","stock","store","stream","streaming","streams","student","study","tag","tags","task","teacher","team","tech","temp","test","thread","tool","tools","topic","topics","torrent","trade","travel","tv","txt","type","u","upload","uploads","url","urls","user","users","v","version","video","videos","view","vip","vod","watch","web","wenku","wiki","work","www","zh","zh-cn","zh-tw","zip"];
+    const 常用路径目录 = ["#", "about", "account", "acg", "act", "activity", "ad", "admin", "ads", "ajax", "album", "albums", "anime", "api", "app", "apps", "archive", "archives", "article", "articles", "ask", "auth", "avatar", "bbs", "bd", "blog", "blogs", "book", "books", "bt", "buy", "cart", "category", "categories", "cb", "channel", "channels", "chat", "china", "city", "class", "classify", "clip", "clips", "club", "cn", "code", "collect", "collection", "comic", "comics", "community", "company", "config", "contact", "content", "course", "courses", "cp", "data", "detail", "details", "dh", "directory", "discount", "discuss", "dl", "dload", "doc", "docs", "document", "documents", "doujin", "download", "downloads", "drama", "edu", "en", "ep", "episode", "episodes", "event", "events", "f", "faq", "favorite", "favourites", "favs", "feedback", "file", "files", "film", "films", "forum", "forums", "friend", "friends", "game", "games", "gif", "go", "go.html", "go.php", "group", "groups", "help", "home", "hot", "htm", "html", "image", "images", "img", "index", "info", "intro", "item", "items", "ja", "jp", "jump", "jump.html", "jump.php", "jumping", "knowledge", "lang", "lesson", "lessons", "lib", "library", "link", "links", "list", "live", "lives", "login", "logout", "m", "mag", "magnet", "mall", "manhua", "map", "member", "members", "message", "messages", "mobile", "movie", "movies", "music", "my", "new", "news", "note", "novel", "novels", "online", "order", "out", "out.html", "out.php", "outbound", "p", "page", "pages", "pay", "payment", "pdf", "photo", "photos", "pic", "pics", "picture", "pictures", "play", "player", "playlist", "post", "posts", "product", "products", "program", "programs", "project", "qa", "question", "rank", "ranking", "read", "readme", "redirect", "redirect.html", "redirect.php", "reg", "register", "res", "resource", "retrieve", "sale", "search", "season", "seasons", "section", "seller", "series", "service", "services", "setting", "settings", "share", "shop", "show", "shows", "site", "soft", "sort", "source", "special", "star", "stars", "static", "stock", "store", "stream", "streaming", "streams", "student", "study", "tag", "tags", "task", "teacher", "team", "tech", "temp", "test", "thread", "tool", "tools", "topic", "topics", "torrent", "trade", "travel", "tv", "txt", "type", "u", "upload", "uploads", "url", "urls", "user", "users", "v", "version", "video", "videos", "view", "vip", "vod", "watch", "web", "wenku", "wiki", "work", "www", "zh", "zh-cn", "zh-tw", "zip"];
     const 随机数 = Math.floor(Math.random() * 3 + 1);
     const 随机路径 = 常用路径目录.sort(() => 0.5 - Math.random()).slice(0, 随机数).join('/');
     return `/${随机路径}`;
@@ -912,8 +952,7 @@ function 随机替换通配符(h) {
     const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
     return h.replace(/\*/g, () => {
         let s = '';
-        let i = 0;
-        for (i = 0; i < Math.floor(Math.random() * 14) + 3; i++)
+        for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++)
             s += 字符集[Math.floor(Math.random() * 36)];
         return s;
     });
@@ -928,7 +967,7 @@ function 批量替换域名(内容, host, 每组数量 = 2) {
     });
 }
 
-async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
+async function 读取config_JSON(env, hostname, userID, path, 重置配置 = false) {
     const host = 随机替换通配符(hostname);
     const 初始化开始时间 = performance.now();
     const 默认配置JSON = {
@@ -938,34 +977,33 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         协议类型: "v" + "le" + "ss",
         传输协议: "ws",
         跳过证书验证: true,
-        启用0RTT: true,
+        启用0RTT: false,
         TLS分片: null,
         随机路径: false,
         优选订阅生成: {
-            local: true, 
+            local: true, // true: 基于本地的优选地址  false: 优选订阅生成器
             本地IP库: {
-                随机IP: true, 
+                随机IP: true, // 当 随机IP 为true时生效，启用随机IP的数量，否则使用KV内的ADD.txt
                 随机数量: 16,
                 指定端口: -1,
             },
             SUB: null,
             SUBNAME: "edge" + "tunnel",
-            SUBUpdateTime: 6, 
+            SUBUpdateTime: 6, // 订阅更新时间（小时）
             TOKEN: await MD5MD5(hostname + userID),
         },
         订阅转换配置: {
             SUBAPI: "https://SUBAPI.cmliussss.net",
-            SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
+            SUBCONFIG: "https://raw.githubusercontent.com/cmliu/ACL4SSR/refs/heads/main/Clash/config/ACL4SSR_Online_Mini_MultiMode_CF.ini",
             SUBEMOJI: false,
         },
         反代: {
             PROXYIP: "auto",
             SOCKS5: {
-                // 注意：旧的全局配置保留但不直接用于控制，改用ENV控制
-                启用: null,
-                全局: false,
-                账号: '',
-                白名单: [],
+                启用: 启用SOCKS5反代,
+                全局: 启用SOCKS5全局反代,
+                账号: 我的SOCKS5账号,
+                白名单: SOCKS5白名单,
             },
         },
         TG: {
@@ -1002,9 +1040,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 
     config_JSON.HOST = host;
     config_JSON.UUID = userID;
-    // 简化 PATH 生成逻辑，不再依赖全局反代变量
-    config_JSON.PATH = config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`;
-    
+    config_JSON.PATH = path ? (path.startsWith('/') ? path : '/' + path) : (config_JSON.反代.SOCKS5.启用 ? ('/' + config_JSON.反代.SOCKS5.启用 + (config_JSON.反代.SOCKS5.全局 ? '://' : '=') + config_JSON.反代.SOCKS5.账号) : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`));
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
     config_JSON.LINK = `${config_JSON.协议类型}://${userID}@${host}:443?security=tls&type=${config_JSON.传输协议}&host=${host}&sni=${host}&path=${encodeURIComponent(config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
     config_JSON.优选订阅生成.TOKEN = await MD5MD5(hostname + userID);
@@ -1091,28 +1127,39 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
                 const buffer = await response.arrayBuffer();
                 const contentType = (response.headers.get('content-type') || '').toLowerCase();
                 const charset = contentType.match(/charset=([^\s;]+)/i)?.[1]?.toLowerCase() || '';
-                let decoders = ['utf-8', 'gb2312']; 
+
+                // 根据 Content-Type 响应头判断编码优先级
+                let decoders = ['utf-8', 'gb2312']; // 默认优先 UTF-8
                 if (charset.includes('gb') || charset.includes('gbk') || charset.includes('gb2312')) {
-                    decoders = ['gb2312', 'utf-8']; 
+                    decoders = ['gb2312', 'utf-8']; // 如果明确指定 GB 系编码，优先尝试 GB2312
                 }
+
+                // 尝试多种编码解码
                 let decodeSuccess = false;
                 for (const decoder of decoders) {
                     try {
                         const decoded = new TextDecoder(decoder).decode(buffer);
+                        // 验证解码结果的有效性
                         if (decoded && decoded.length > 0 && !decoded.includes('\ufffd')) {
                             text = decoded;
                             decodeSuccess = true;
                             break;
                         } else if (decoded && decoded.length > 0) {
+                            // 如果有替换字符 (U+FFFD)，说明编码不匹配，继续尝试下一个编码
                             continue;
                         }
                     } catch (e) {
+                        // 该编码解码失败，尝试下一个
                         continue;
                     }
                 }
+
+                // 如果所有编码都失败或无效，尝试 response.text()
                 if (!decodeSuccess) {
                     text = await response.text();
                 }
+
+                // 如果返回的是空或无效数据，返回
                 if (!text || text.trim().length === 0) {
                     return;
                 }
@@ -1169,7 +1216,96 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 }
 
 async function 反代参数获取(request) {
-    // 占位函数，保持兼容性，逻辑已移至主流程
+    const url = new URL(request.url);
+    const { pathname, searchParams } = url;
+    const pathLower = pathname.toLowerCase();
+
+    // 初始化
+    我的SOCKS5账号 = searchParams.get('socks5') || searchParams.get('http') || null;
+    启用SOCKS5全局反代 = searchParams.has('globalproxy') || false;
+
+    // 统一处理反代IP参数 (优先级最高,使用正则一次匹配)
+    const proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)(.+)/);
+    if (searchParams.has('proxyip')) {
+        const 路参IP = searchParams.get('proxyip');
+        反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
+        return;
+    } else if (proxyMatch) {
+        const 路参IP = proxyMatch[1] === 'proxyip.' ? `proxyip.${proxyMatch[2]}` : proxyMatch[2];
+        反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
+        return;
+    }
+
+    // 处理SOCKS5/HTTP代理参数
+    let socksMatch;
+    if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?(.+)/i))) {
+        // 格式: /socks5://... 或 /http://...
+        启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
+        我的SOCKS5账号 = socksMatch[2].split('#')[0];
+        启用SOCKS5全局反代 = true;
+
+        // 处理Base64编码的用户名密码
+        if (我的SOCKS5账号.includes('@')) {
+            const atIndex = 我的SOCKS5账号.lastIndexOf('@');
+            let userPassword = 我的SOCKS5账号.substring(0, atIndex).replaceAll('%3D', '=');
+            if (/^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i.test(userPassword) && !userPassword.includes(':')) {
+                userPassword = atob(userPassword);
+            }
+            我的SOCKS5账号 = `${userPassword}@${我的SOCKS5账号.substring(atIndex + 1)}`;
+        }
+    } else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=(.+)/i))) {
+        // 格式: /socks5=... 或 /s5=... 或 /gs5=... 或 /http=... 或 /ghttp=...
+        const type = socksMatch[1].toLowerCase();
+        我的SOCKS5账号 = socksMatch[2];
+        启用SOCKS5反代 = type.includes('http') ? 'http' : 'socks5';
+        启用SOCKS5全局反代 = type.startsWith('g') || 启用SOCKS5全局反代; // gs5 或 ghttp 开头启用全局
+    }
+
+    // 解析SOCKS5地址
+    if (我的SOCKS5账号) {
+        try {
+            parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号);
+            启用SOCKS5反代 = searchParams.get('http') ? 'http' : 启用SOCKS5反代;
+        } catch (err) {
+            console.error('解析SOCKS5地址失败:', err.message);
+            启用SOCKS5反代 = null;
+        }
+    } else 启用SOCKS5反代 = null;
+}
+
+async function 获取SOCKS5账号(address) {
+    if (address.includes('@')) {
+        const lastAtIndex = address.lastIndexOf('@');
+        let userPassword = address.substring(0, lastAtIndex).replaceAll('%3D', '=');
+        const base64Regex = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i;
+        if (base64Regex.test(userPassword) && !userPassword.includes(':')) userPassword = atob(userPassword);
+        address = `${userPassword}@${address.substring(lastAtIndex + 1)}`;
+    }
+    const atIndex = address.lastIndexOf("@");
+    const [hostPart, authPart] = atIndex === -1 ? [address, undefined] : [address.substring(atIndex + 1), address.substring(0, atIndex)];
+
+    // 解析认证
+    let username, password;
+    if (authPart) {
+        [username, password] = authPart.split(":");
+        if (!password) throw new Error('无效的 SOCKS 地址格式：认证部分必须是 "username:password" 的形式');
+    }
+
+    // 解析主机端口
+    let hostname, port;
+    if (hostPart.includes("]:")) { // IPv6带端口
+        [hostname, port] = [hostPart.split("]:")[0] + "]", Number(hostPart.split("]:")[1].replace(/[^\d]/g, ''))];
+    } else if (hostPart.startsWith("[")) { // IPv6无端口
+        [hostname, port] = [hostPart, 80];
+    } else { // IPv4/域名
+        const parts = hostPart.split(":");
+        [hostname, port] = parts.length === 2 ? [parts[0], Number(parts[1].replace(/[^\d]/g, ''))] : [hostPart, 80];
+    }
+
+    if (isNaN(port)) throw new Error('无效的 SOCKS 地址格式：端口号必须是数字');
+    if (hostname.includes(":") && !/^\[.*\]$/.test(hostname)) throw new Error('无效的 SOCKS 地址格式：IPv6 地址必须用方括号括起来，如 [2001:db8::1]');
+
+    return { username, password, hostname, port };
 }
 
 async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
@@ -1304,14 +1440,12 @@ async function 解析地址端口(proxyIP) {
 
 async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
     const startTime = Date.now();
-    let parsedSocks5Address;
     try { parsedSocks5Address = await 获取SOCKS5账号(代理参数); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
     const { username, password, hostname, port } = parsedSocks5Address;
     const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
     try {
         const initialData = new Uint8Array(0);
-        const proxyConfig = { username, password, hostname, port };
-        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData, proxyConfig) : await httpConnect('check.socks5.090227.xyz', 80, initialData, proxyConfig);
+        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData) : await httpConnect('check.socks5.090227.xyz', 80, initialData);
         if (!tcpSocket) return { success: false, error: '无法连接到代理服务器', proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
         try {
             const writer = tcpSocket.writable.getWriter(), encoder = new TextEncoder();
