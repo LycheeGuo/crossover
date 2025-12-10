@@ -4,9 +4,16 @@ import { connect } from "cloudflare:sockets";
 const Pages静态页面 = 'https://edt-pages.github.io';
 const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 
-// [新增] 自定义国旗列表
-const 国家国旗列表 = [
-    '🇺🇸 US', '🇭🇰 HK', '🇯🇵 JP', '🇸🇬 SG', '🇹🇼 TW', '🇬🇧 UK', '🇰🇷 KR', '🇩🇪 DE', '🇫🇷 FR'
+// [配置] 静态学术代理列表 (优先使用)
+const STATIC_AIP = [
+    'http://208.180.238.40:3390',
+    'http://59.127.212.110:4431',
+    'http://82.66.253.131:9080',
+    'http://172.86.75.243:9036',
+    'http://78.26.211.61:9080',
+    'http://201.217.28.203:88',
+    'http://46.30.160.47:7070',
+    'http://190.6.54.12:6969'
 ];
 
 // [变量] 模块级变量 (仅用于缓存配置，不用于存储请求状态)
@@ -26,8 +33,10 @@ export default {
         const userID = (envUUID && uuidRegex.test(envUUID)) ? envUUID.toLowerCase() : [userIDMD5.slice(0, 8), userIDMD5.slice(8, 12), '4' + userIDMD5.slice(13, 16), userIDMD5.slice(16, 20), userIDMD5.slice(20)].join('-');
         const host = env.HOST ? env.HOST.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0] : url.hostname;
         
-        // 提取 AIP 变量 (兼容 ACADEMIC_PROXY)
-        const AIP_Proxy_List = env.AIP || env.ACADEMIC_PROXY || '';
+        // 提取 AIP 变量 (合并静态列表与ENV列表)
+        const Env_AIP_Str = env.AIP || env.ACADEMIC_PROXY || '';
+        const Env_AIP_Arr = Env_AIP_Str ? await 整理成数组(Env_AIP_Str) : [];
+        const AIP_Proxy_List = [...STATIC_AIP, ...Env_AIP_Arr]; // 静态在前，ENV在后
 
         // [局部变量] 反代IP处理
         let 当前反代IP = '';
@@ -234,7 +243,10 @@ export default {
                     if (订阅类型 === 'mixed') {
                         const 节点路径 = config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH;
                         const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
-                        const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
+                        
+                        // [修改] 强制只需要25个，用于固定排序
+                        const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, 25, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, 25, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
+                        
                         const 优选API = [], 优选IP = [], 其他节点 = [];
                         for (const 元素 of 完整优选列表) {
                             if (元素.toLowerCase().startsWith('https://')) 优选API.push(元素);
@@ -243,8 +255,12 @@ export default {
                         }
                         const 其他节点LINK = 其他节点.join('\n') + '\n';
                         if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { 
-                            const 优选API的IP = await 请求优选API(优选API);
-                            const 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
+                            // [修改] 缩短超时时间加快速度
+                            const 优选API的IP = await 请求优选API(优选API, '443', 1500);
+                            let 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
+                            
+                            // 确保只有25个
+                            if(完整优选IP.length > 25) 完整优选IP = 完整优选IP.slice(0, 25);
                             
                             订阅内容 = 完整优选IP.map((原始地址, index) => {
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
@@ -255,8 +271,14 @@ export default {
                                 if (match) {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
-                                    const 随机国旗 = 国家国旗列表[Math.floor(Math.random() * 国家国旗列表.length)];
-                                    节点备注 = 随机国旗; 
+                                    
+                                    // [修改] 节点命名逻辑
+                                    // HK, US, SG, JP, KR
+                                    const regionMap = ['HK', 'US', 'SG', 'JP', 'KR'];
+                                    const regionIndex = Math.floor(index / 5);
+                                    const regionName = regionMap[regionIndex] || 'Node'; 
+                                    const number = (index % 5) + 1;
+                                    节点备注 = `${regionName} ${String(number).padStart(2, '0')}`;
                                 } else {
                                     return null;
                                 }
@@ -277,6 +299,7 @@ export default {
                             }
                         }
                     } else { 
+                        // [修改] 默认SUBAPI已改
                         const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
                         try {
                             const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel(https://github.com/cmliu/edge' + 'tunnel)' } });
@@ -305,7 +328,7 @@ export default {
         } else if (管理员密码) {// ws代理
             // 解析本次请求的代理参数 (防止并发污染)
             const proxyParams = await 反代参数获取(request);
-            // 传递所有需要的参数，不再依赖全局变量
+            // [修改] 传递完整 AIP 列表
             return await 处理WS请求(request, userID, AIP_Proxy_List, 当前反代IP, proxyParams);
         }
 
@@ -340,8 +363,8 @@ async function 处理WS请求(request, yourUUID, AIP_Var, defaultProxyIP, proxyP
     const readable = makeReadableStr(serverSock, earlyData);
     let 判断是否是木马 = null;
     
-    // 缓存 AIP 列表解析结果
-    const AIP_List = AIP_Var ? await 整理成数组(AIP_Var) : [];
+    // [修改] 直接使用传入的 AIP_Var 数组
+    const AIP_List = AIP_Var || [];
 
     readable.pipeTo(new WritableStream({
         async write(chunk) {
@@ -382,7 +405,7 @@ async function 处理WS请求(request, yourUUID, AIP_Var, defaultProxyIP, proxyP
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
-            // [核心分流逻辑] - 拦截 Scholar
+            // [核心分流逻辑] - 拦截 Scholar (优先使用静态AIP池)
             // -----------------------------------------------------------
             if (hostname.includes('scholar.google.com') && AIP_List.length > 0) {
                 try {
@@ -451,7 +474,7 @@ async function connectToScholarProxy(targetHost, targetPort, initialData, ws, re
 
 // -----------------------------------------------------------------------------
 
-// [修改] TCP 转发逻辑 - 接收 proxyParams，移除全局变量依赖
+// TCP 转发逻辑 - 接收 proxyParams，移除全局变量依赖
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, defaultProxyIP, proxyParams) {
     const { 启用SOCKS5反代, 启用SOCKS5全局反代, parsedSocks5Address } = proxyParams;
 
@@ -498,7 +521,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
     }
 }
 
-// [修改] 参数获取函数 - 返回对象，不修改全局变量
+// 参数获取函数 - 返回对象，不修改全局变量
 async function 反代参数获取(request) {
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
@@ -542,7 +565,7 @@ async function 反代参数获取(request) {
     return { 启用SOCKS5反代, 启用SOCKS5全局反代, parsedSocks5Address };
 }
 
-// [修改] 增加参数接收
+// 增加参数接收
 async function socks5Connect(targetHost, targetPort, initialData, proxyConfig) {
     const { username, password, hostname, port } = proxyConfig; // 从参数读取
     const socket = connect({ hostname, port });
@@ -582,7 +605,7 @@ async function socks5Connect(targetHost, targetPort, initialData, proxyConfig) {
     }
 }
 
-// [修改] 增加参数接收
+// 增加参数接收
 async function httpConnect(targetHost, targetPort, initialData, proxyConfig) {
     const { username, password, hostname, port } = proxyConfig; // 从参数读取
     const socket = connect({ hostname, port });
@@ -1005,75 +1028,6 @@ function base64ToArray(b64Str) {
     }
 }
 
-////////////////////////////////SOCKS5/HTTP函数 (已参数化)///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData, proxyConfig) {
-    const { username, password, hostname, port } = proxyConfig;
-    const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
-    try {
-        const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
-        await writer.write(authMethods);
-        let response = await reader.read();
-        if (response.done || response.value.byteLength < 2) throw new Error('S5 method selection failed');
-
-        const selectedMethod = new Uint8Array(response.value)[1];
-        if (selectedMethod === 0x02) {
-            if (!username || !password) throw new Error('S5 requires authentication');
-            const userBytes = new TextEncoder().encode(username), passBytes = new TextEncoder().encode(password);
-            const authPacket = new Uint8Array([0x01, userBytes.length, ...userBytes, passBytes.length, ...passBytes]);
-            await writer.write(authPacket);
-            response = await reader.read();
-            if (response.done || new Uint8Array(response.value)[1] !== 0x00) throw new Error('S5 authentication failed');
-        } else if (selectedMethod !== 0x00) throw new Error(`S5 unsupported auth method: ${selectedMethod}`);
-
-        const hostBytes = new TextEncoder().encode(targetHost);
-        const connectPacket = new Uint8Array([0x05, 0x01, 0x00, 0x03, hostBytes.length, ...hostBytes, targetPort >> 8, targetPort & 0xff]);
-        await writer.write(connectPacket);
-        response = await reader.read();
-        if (response.done || new Uint8Array(response.value)[1] !== 0x00) throw new Error('S5 connection failed');
-
-        await writer.write(initialData);
-        writer.releaseLock(); reader.releaseLock();
-        return socket;
-    } catch (error) {
-        try { writer.releaseLock(); } catch (e) { }
-        try { reader.releaseLock(); } catch (e) { }
-        try { socket.close(); } catch (e) { }
-        throw error;
-    }
-}
-
-async function httpConnect(targetHost, targetPort, initialData, proxyConfig) {
-    const { username, password, hostname, port } = proxyConfig;
-    const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
-    try {
-        const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
-        const request = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${auth}User-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
-        await writer.write(new TextEncoder().encode(request));
-
-        let responseBuffer = new Uint8Array(0), headerEndIndex = -1, bytesRead = 0;
-        while (headerEndIndex === -1 && bytesRead < 8192) {
-            const { done, value } = await reader.read();
-            if (done) throw new Error('Connection closed before receiving HTTP response');
-            responseBuffer = new Uint8Array([...responseBuffer, ...value]);
-            bytesRead = responseBuffer.length;
-            const crlfcrlf = responseBuffer.findIndex((_, i) => i < responseBuffer.length - 3 && responseBuffer[i] === 0x0d && responseBuffer[i + 1] === 0x0a && responseBuffer[i + 2] === 0x0d && responseBuffer[i + 3] === 0x0a);
-            if (crlfcrlf !== -1) headerEndIndex = crlfcrlf + 4;
-        }
-
-        if (headerEndIndex === -1) throw new Error('Invalid HTTP response');
-        const statusCode = parseInt(new TextDecoder().decode(responseBuffer.slice(0, headerEndIndex)).split('\r\n')[0].match(/HTTP\/\d\.\d\s+(\d+)/)[1]);
-        if (statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
-
-        await writer.write(initialData);
-        writer.releaseLock(); reader.releaseLock();
-        return socket;
-    } catch (error) {
-        try { writer.releaseLock(); } catch (e) { }
-        try { reader.releaseLock(); } catch (e) { }
-        try { socket.close(); } catch (e) { }
-        throw error;
-    }
-}
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
 function surge(content, url, config_JSON) {
     const 每行内容 = content.includes('\r\n') ? content.split('\r\n') : content.split('\n');
@@ -1226,7 +1180,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
             local: true, 
             本地IP库: {
                 随机IP: true, 
-                随机数量: 16,
+                随机数量: 25, // [修改] 强制25个
                 指定端口: -1,
             },
             SUB: null,
@@ -1235,7 +1189,8 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
             TOKEN: await MD5MD5(hostname + userID),
         },
         订阅转换配置: {
-            SUBAPI: "https://SUBAPI.cmliussss.net",
+            // [修改] 自定义后端
+            SUBAPI: "https://subapi.deer.ip-ddns.com",
             SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
             SUBEMOJI: false,
         },
@@ -1358,7 +1313,8 @@ async function 整理成数组(内容) {
     return 地址数组;
 }
 
-async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) {
+// [优化] 默认超时改为 1500ms
+async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) {
     if (!urls?.length) return [];
     const results = new Set();
     await Promise.allSettled(urls.map(async (url) => {
@@ -1447,166 +1403,6 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
         } catch (e) { }
     }));
     return Array.from(results);
-}
-
-async function 获取SOCKS5账号(address) {
-    if (address.includes('@')) {
-        const lastAtIndex = address.lastIndexOf('@');
-        let userPassword = address.substring(0, lastAtIndex).replaceAll('%3D', '=');
-        const base64Regex = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i;
-        if (base64Regex.test(userPassword) && !userPassword.includes(':')) userPassword = atob(userPassword);
-        address = `${userPassword}@${address.substring(lastAtIndex + 1)}`;
-    }
-    const atIndex = address.lastIndexOf("@");
-    const [hostPart, authPart] = atIndex === -1 ? [address, undefined] : [address.substring(atIndex + 1), address.substring(0, atIndex)];
-
-    let username, password;
-    if (authPart) {
-        [username, password] = authPart.split(":");
-    }
-
-    let hostname, port;
-    if (hostPart.includes("]:")) { 
-        [hostname, port] = [hostPart.split("]:")[0] + "]", Number(hostPart.split("]:")[1].replace(/[^\d]/g, ''))];
-    } else if (hostPart.startsWith("[")) { 
-        [hostname, port] = [hostPart, 80];
-    } else { 
-        const parts = hostPart.split(":");
-        [hostname, port] = parts.length === 2 ? [parts[0], Number(parts[1].replace(/[^\d]/g, ''))] : [hostPart, 80];
-    }
-
-    if (isNaN(port)) throw new Error('无效的 SOCKS 地址格式：端口号必须是数字');
-
-    return { username, password, hostname, port };
-}
-
-async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
-    const API = "https://api.cloudflare.com/client/v4";
-    const sum = (a) => a?.reduce((t, i) => t + (i?.sum?.requests || 0), 0) || 0;
-    const cfg = { "Content-Type": "application/json" };
-
-    try {
-        if (!AccountID && (!Email || !GlobalAPIKey)) return { success: false, pages: 0, workers: 0, total: 0 };
-
-        if (!AccountID) {
-            const r = await fetch(`${API}/accounts`, {
-                method: "GET",
-                headers: { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey }
-            });
-            if (!r.ok) throw new Error(`账户获取失败: ${r.status}`);
-            const d = await r.json();
-            if (!d?.result?.length) throw new Error("未找到账户");
-            const idx = d.result.findIndex(a => a.name?.toLowerCase().startsWith(Email.toLowerCase()));
-            AccountID = d.result[idx >= 0 ? idx : 0]?.id;
-        }
-
-        const now = new Date();
-        now.setUTCHours(0, 0, 0, 0);
-        const hdr = APIToken ? { ...cfg, "Authorization": `Bearer ${APIToken}` } : { ...cfg, "X-AUTH-EMAIL": Email, "X-AUTH-KEY": GlobalAPIKey };
-
-        const res = await fetch(`${API}/graphql`, {
-            method: "POST",
-            headers: hdr,
-            body: JSON.stringify({
-                query: `query getBillingMetrics($AccountID: String!, $filter: AccountWorkersInvocationsAdaptiveFilter_InputObject) {
-                    viewer { accounts(filter: {accountTag: $AccountID}) {
-                        pagesFunctionsInvocationsAdaptiveGroups(limit: 1000, filter: $filter) { sum { requests } }
-                        workersInvocationsAdaptive(limit: 10000, filter: $filter) { sum { requests } }
-                    } }
-                }`,
-                variables: { AccountID, filter: { datetime_geq: now.toISOString(), datetime_leq: new Date().toISOString() } }
-            })
-        });
-
-        if (!res.ok) throw new Error(`查询失败: ${res.status}`);
-        const result = await res.json();
-        if (result.errors?.length) throw new Error(result.errors[0].message);
-
-        const acc = result?.data?.viewer?.accounts?.[0];
-        if (!acc) throw new Error("未找到账户数据");
-
-        const pages = sum(acc.pagesFunctionsInvocationsAdaptiveGroups);
-        const workers = sum(acc.workersInvocationsAdaptive);
-        const total = pages + workers;
-        return { success: true, pages, workers, total };
-
-    } catch (error) {
-        console.error('获取使用量错误:', error.message);
-        return { success: false, pages: 0, workers: 0, total: 0 };
-    }
-}
-
-function sha224(s) {
-    const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
-    const r = (n, b) => ((n >>> b) | (n << (32 - b))) >>> 0;
-    s = unescape(encodeURIComponent(s));
-    const l = s.length * 8; s += String.fromCharCode(0x80);
-    while ((s.length * 8) % 512 !== 448) s += String.fromCharCode(0);
-    const h = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4];
-    const hi = Math.floor(l / 0x100000000), lo = l & 0xFFFFFFFF;
-    s += String.fromCharCode((hi >>> 24) & 0xFF, (hi >>> 16) & 0xFF, (hi >>> 8) & 0xFF, hi & 0xFF, (lo >>> 24) & 0xFF, (lo >>> 16) & 0xFF, (lo >>> 8) & 0xFF, lo & 0xFF);
-    const w = []; for (let i = 0; i < s.length; i += 4)w.push((s.charCodeAt(i) << 24) | (s.charCodeAt(i + 1) << 16) | (s.charCodeAt(i + 2) << 8) | s.charCodeAt(i + 3));
-    for (let i = 0; i < w.length; i += 16) {
-        const x = new Array(64).fill(0);
-        for (let j = 0; j < 16; j++)x[j] = w[i + j];
-        for (let j = 16; j < 64; j++) {
-            const s0 = r(x[j - 15], 7) ^ r(x[j - 15], 18) ^ (x[j - 15] >>> 3);
-            const s1 = r(x[j - 2], 17) ^ r(x[j - 2], 19) ^ (x[j - 2] >>> 10);
-            x[j] = (x[j - 16] + s0 + x[j - 7] + s1) >>> 0;
-        }
-        let [a, b, c, d, e, f, g, h0] = h;
-        for (let j = 0; j < 64; j++) {
-            const S1 = r(e, 6) ^ r(e, 11) ^ r(e, 25), ch = (e & f) ^ (~e & g), t1 = (h0 + S1 + ch + K[j] + x[j]) >>> 0;
-            const S0 = r(a, 2) ^ r(a, 13) ^ r(a, 22), maj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + maj) >>> 0;
-            h0 = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
-        }
-        for (let j = 0; j < 8; j++)h[j] = (h[j] + (j === 0 ? a : j === 1 ? b : j === 2 ? c : j === 3 ? d : j === 4 ? e : j === 5 ? f : j === 6 ? g : h0)) >>> 0;
-    }
-    let hex = '';
-    for (let i = 0; i < 7; i++) {
-        for (let j = 24; j >= 0; j -= 8)hex += ((h[i] >>> j) & 0xFF).toString(16).padStart(2, '0');
-    }
-    return hex;
-}
-
-async function 解析地址端口(proxyIP) {
-    proxyIP = proxyIP.toLowerCase();
-    if (proxyIP.includes('.william')) {
-        const williamResult = await (async function 解析William域名(william) {
-            try {
-                const response = await fetch(`https://1.1.1.1/dns-query?name=${william}&type=TXT`, { headers: { 'Accept': 'application/dns-json' } });
-                if (!response.ok) return null;
-                const data = await response.json();
-                const txtRecords = (data.Answer || []).filter(record => record.type === 16).map(record => record.data);
-                if (txtRecords.length === 0) return null;
-                let txtData = txtRecords[0];
-                if (txtData.startsWith('"') && txtData.endsWith('"')) txtData = txtData.slice(1, -1);
-                const prefixes = txtData.replace(/\\010/g, ',').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(Boolean);
-                if (prefixes.length === 0) return null;
-                return prefixes[Math.floor(Math.random() * prefixes.length)];
-            } catch (error) {
-                console.error('解析ProxyIP失败:', error);
-                return null;
-            }
-        })(proxyIP);
-        proxyIP = williamResult || proxyIP;
-    }
-    let 地址 = proxyIP, 端口 = 443;
-    if (proxyIP.includes('.tp')) {
-        const tpMatch = proxyIP.match(/\.tp(\d+)/);
-        if (tpMatch) 端口 = parseInt(tpMatch[1], 10);
-        return [地址, 端口];
-    }
-    if (proxyIP.includes(']:')) {
-        const parts = proxyIP.split(']:');
-        地址 = parts[0] + ']';
-        端口 = parseInt(parts[1], 10) || 端口;
-    } else if (proxyIP.includes(':') && !proxyIP.startsWith('[')) {
-        const colonIndex = proxyIP.lastIndexOf(':');
-        地址 = proxyIP.slice(0, colonIndex);
-        端口 = parseInt(proxyIP.slice(colonIndex + 1), 10) || 端口;
-    }
-    return [地址, 端口];
 }
 
 async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
