@@ -9,7 +9,7 @@ const GOOGLE_SCHOLAR_PROXIES = [
     'http://208.180.238.40:3390',
     'http://59.127.212.110:4431',
     'http://82.66.253.131:9080',
-	'http://46.30.160.47:7070'
+    'http://46.30.160.47:7070'
 ];
 
 // [变量] 模块级变量 (仅用于缓存配置)
@@ -1185,7 +1185,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         },
         订阅转换配置: {
             // [自定义后端]
-            SUBAPI: "https://subapi.deer.ip-ddns.com",
+            SUBAPI: https://lychee.zeabur.app",
             SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
             SUBEMOJI: false,
         },
@@ -1529,6 +1529,7 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
 
 
 
