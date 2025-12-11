@@ -1185,7 +1185,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         },
         订阅转换配置: {
             // [自定义后端]
-            SUBAPI: https://lychee.zeabur.app",
+            SUBAPI: "https://lychee.zeabur.app",
             SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
             SUBEMOJI: false,
         },
@@ -1529,6 +1529,7 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
 
 
 
