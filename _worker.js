@@ -71,7 +71,7 @@ export default {
                 if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
                 
                 // 加载配置
-                config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
+                config_JSON = await 读取config_JSON(env, host, userID);
 
                 if (访问路径 === 'admin/log.json') {
                     const 读取日志内容 = await env.KV.get('log.json') || '[]';
@@ -107,7 +107,7 @@ export default {
                     return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 } else if (访问路径 === 'admin/init') {
                     try {
-                        config_JSON = await 读取config_JSON(env, host, userID, env.PATH, true);
+                        config_JSON = await 读取config_JSON(env, host, userID, true);
                         ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Init_Config', config_JSON));
                         config_JSON.init = '配置已重置为默认值';
                         return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -194,7 +194,7 @@ export default {
             } else if (访问路径 === 'sub') {
                 const 订阅TOKEN = await MD5MD5(host + userID);
                 if (url.searchParams.get('token') === 订阅TOKEN) {
-                    config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
+                    config_JSON = await 读取config_JSON(env, host, userID);
                     ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_SUB', config_JSON));
                     const ua = UA.toLowerCase();
                     const expire = 4102329600;
@@ -348,18 +348,22 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();
+
     let remoteConnWrapper = { socket: null };
     let isDnsQuery = false;
+    let 判断是否是木马 = null;
+
     const earlyData = request.headers.get('sec-websocket-protocol') || '';
     const readable = makeReadableStr(serverSock, earlyData);
-    let 判断是否是木马 = null;
-    
-    // [反代] 获取全局代理参数
-    const { 启用SOCKS5反代, 启用SOCKS5全局反代, parsedSocks5Address } = proxyParams;
 
     readable.pipeTo(new WritableStream({
         async write(chunk) {
-            if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
+            // UDP DNS 已建立，后续包直接走 UDP 逻辑
+            if (isDnsQuery) {
+                return await forwardataudp(chunk, serverSock, null);
+            }
+
+            // 已经有远端 socket，直接转发
             if (remoteConnWrapper.socket) {
                 const writer = remoteConnWrapper.socket.writable.getWriter();
                 await writer.write(chunk);
@@ -367,16 +371,15 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
                 return;
             }
 
+            if (!(chunk instanceof ArrayBuffer || ArrayBuffer.isView(chunk))) {
+                return; // 防御性判断
+            }
+            const bytes = new Uint8Array(chunk);
+            if (bytes.byteLength === 0) return;
+
+            // 第一个数据包：判断是否为“木马”模式
             if (判断是否是木马 === null) {
-                const bytes = new Uint8Array(chunk);
                 判断是否是木马 = bytes.byteLength >= 58 && bytes[56] === 0x0d && bytes[57] === 0x0a;
-            }
-
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk);
-                writer.releaseLock();
-                return;
             }
 
             let parsedInfo;
@@ -386,138 +389,170 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
                 parsedInfo = 解析魏烈思请求(chunk, yourUUID);
             }
 
-            const { hasError, message, port, hostname, rawIndex, version, isUDP, rawClientData } = parsedInfo;
+            const { hasError, port, hostname, rawIndex, version, isUDP, rawClientData, message } = parsedInfo;
 
-            if (hasError) return;
-            
-            if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-
-            // -----------------------------------------------------------
-            // [核心分流逻辑] - 拦截 Scholar (使用硬编码列表 + 重试机制)
-            // -----------------------------------------------------------
-            if (hostname.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
-                const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
-                const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
-                
-                // [重试机制] 尝试最多3次，每次随机选择不同的代理
-                const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
-                const triedProxies = new Set();
-                
-                for (let attempt = 0; attempt < maxRetries; attempt++) {
-                    try {
-                        // 从未尝试过的代理中随机选择一个
-                        const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
-                        if (availableProxies.length === 0) break; // 所有代理都已尝试
-                        
-                        const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
-                        triedProxies.add(randomAIP);
-                        
-                        await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
-                        return; // 成功连接，立即返回
-                    } catch (e) {
-                        console.error(`Scholar 代理连接失败 (尝试 ${attempt + 1}/${maxRetries}): ${e.message}`);
-                        // 继续下一次重试
-                    }
-                }
-                // 所有Scholar代理都失败后，记录日志并继续执行下方的常规TCP连接逻辑
-                console.error('All Scholar proxies failed, falling back to regular TCP connection');
+            if (hasError) {
+                // 可以按需写日志，但不要抛异常以免直接断开所有连接
+                // console.error('解析请求失败:', message);
+                return;
             }
-            // -----------------------------------------------------------
 
+            if (isSpeedTestSite(hostname)) {
+                throw new Error('Speedtest site is blocked');
+            }
+
+            // ------------------ UDP 分支：只支持 DNS 53 ------------------
             if (!判断是否是木马 && isUDP) {
-                if (port === 53) isDnsQuery = true;
-                else throw new Error('UDP is not supported');
+                if (port === 53) {
+                    isDnsQuery = true;
+                    const rawPayload = chunk.slice(rawIndex);
+                    const respHeader = new Uint8Array([version[0], 0]);
+                    return forwardataudp(rawPayload, serverSock, respHeader);
+                } else {
+                    throw new Error('UDP is not supported');
+                }
             }
 
+            // TCP 数据载荷
             const rawPayload = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
             const respHeader = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
 
-            if (isDnsQuery) return forwardataudp(rawPayload, serverSock, respHeader);
-            
-            await forwardataTCP(hostname, port, rawPayload, serverSock, respHeader, remoteConnWrapper, defaultProxyIP, proxyParams);
+            // ------------------ Scholar 专用出口 ------------------
+            if (isScholarHost(hostname) && GOOGLE_SCHOLAR_PROXIES.length > 0) {
+                const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
+                const tried = new Set();
+
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        const remain = GOOGLE_SCHOLAR_PROXIES.filter(p => !tried.has(p));
+                        if (!remain.length) break;
+                        const proxyStr = remain[Math.floor(Math.random() * remain.length)];
+                        tried.add(proxyStr);
+
+                        await connectToScholarProxy(
+                            hostname,
+                            port,
+                            rawPayload,
+                            serverSock,
+                            respHeader,
+                            remoteConnWrapper,
+                            proxyStr
+                        );
+                        return; // 成功，直接返回
+                    } catch (e) {
+                        // console.error(`Scholar 代理连接失败(${attempt + 1}/${maxRetries}):`, e.message);
+                    }
+                }
+
+                // 所有 Scholar 代理都失败，则降级到普通代理
+                // console.error('All Scholar proxies failed, fallback to normal proxy');
+            }
+
+            // ------------------ 普通 TCP：一律走 socks/http 或 defaultProxyIP ------------------
+            await forwardataTCP(
+                hostname,
+                port,
+                rawPayload,
+                serverSock,
+                respHeader,
+                remoteConnWrapper,
+                defaultProxyIP,
+                proxyParams
+            );
         },
-    })).catch((err) => {});
+    })).catch(() => {
+        // 忽略管道错误，WS 关闭时自然结束
+    });
 
     return new Response(null, { status: 101, webSocket: clientSock });
 }
 
+// Scholar 域名判断
+function isScholarHost(hostname) {
+    if (!hostname) return false;
+    const h = hostname.toLowerCase();
+    return h === 'scholar.google.com' || h.endsWith('.scholar.google.com');
+}
+
 // -----------------------------------------------------------------------------
-// [优化] Scholar 代理连接
+// Scholar 代理连接
 // -----------------------------------------------------------------------------
 async function connectToScholarProxy(targetHost, targetPort, initialData, ws, respHeader, remoteConnWrapper, proxyAddressString) {
-    let proxyProtocol = 'http'; // 默认 HTTP
-    let addressStr = proxyAddressString;
+    let scheme = 'http';
+    let address = proxyAddressString;
 
-    if (addressStr.startsWith('socks5://')) {
-        proxyProtocol = 'socks5';
-        addressStr = addressStr.slice(9);
-    } else if (addressStr.startsWith('http://')) {
-        addressStr = addressStr.slice(7);
-    } else if (addressStr.startsWith('https://')) {
-        addressStr = addressStr.slice(8);
+    if (address.startsWith('socks5://')) {
+        scheme = 'socks5';
+        address = address.slice('socks5://'.length);
+    } else if (address.startsWith('http://')) {
+        scheme = 'http';
+        address = address.slice('http://'.length);
+    } else if (address.startsWith('https://')) {
+        // 这里也按 http CONNECT 处理
+        scheme = 'http';
+        address = address.slice('https://'.length);
     }
 
-    // 解析代理配置
-    const proxyConfig = await 获取SOCKS5账号(addressStr); 
+    // 解析代理配置（账号/主机/端口）
+    const proxyConfig = await 获取SOCKS5账号(address); 
     
     let newSocket;
-    if (proxyProtocol === 'socks5') {
+    if (scheme === 'socks5') {
         newSocket = await socks5Connect(targetHost, targetPort, initialData, proxyConfig);
     } else {
         newSocket = await httpConnect(targetHost, targetPort, initialData, proxyConfig);
     }
 
     remoteConnWrapper.socket = newSocket;
-    newSocket.closed.catch(() => {}).finally(() => closeSocketQuietly(ws));
+    newSocket.closed
+        .catch(() => {})
+        .finally(() => closeSocketQuietly(ws));
+
     connectStreams(newSocket, ws, respHeader, null);
 }
 
 // -----------------------------------------------------------------------------
-
-// TCP 转发逻辑
+// TCP 转发逻辑：统一走 socks/http 或 defaultProxyIP
+// -----------------------------------------------------------------------------
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, defaultProxyIP, proxyParams) {
-    const { 启用SOCKS5反代, 启用SOCKS5全局反代, parsedSocks5Address } = proxyParams;
+    const { 启用SOCKS5反代, parsedSocks5Address } = proxyParams;
 
-    async function connectDirect(address, port, data) {
-        const remoteSock = connect({ hostname: address, port: port });
-        const writer = remoteSock.writable.getWriter();
-        await writer.write(data);
-        writer.releaseLock();
-        return remoteSock;
-    }
-
-    async function connecttoPry() {
-        let newSocket;
-        if (启用SOCKS5反代 === 'socks5') {
-            newSocket = await socks5Connect(host, portNum, rawData, parsedSocks5Address);
-        } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
-            newSocket = await httpConnect(host, portNum, rawData, parsedSocks5Address);
-        } else {
-            // 普通反代IP逻辑
-            try {
-                const [反代IP地址, 反代IP端口] = await 解析地址端口(defaultProxyIP);
-                newSocket = await connectDirect(反代IP地址, 反代IP端口, rawData);
-            } catch { 
-                // 兜底
-                newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData) 
-            }
-        }
-        remoteConnWrapper.socket = newSocket;
-        newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
-        connectStreams(newSocket, ws, respHeader, null);
-    }
-
-    if (启用SOCKS5反代 && 启用SOCKS5全局反代) {
-        try { await connecttoPry(); } catch (err) { throw err; }
-    } else {
+    async function connectViaDefaultProxy() {
+        let proxyHost, proxyPort;
         try {
-            const initialSocket = await connectDirect(host, portNum, rawData);
-            remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, connecttoPry);
-        } catch (err) {
-            await connecttoPry();
+            [proxyHost, proxyPort] = await 解析地址端口(defaultProxyIP);
+        } catch (e) {
+            // 兜底：使用内置 fallback host
+            proxyHost = atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg==');
+            proxyPort = 1;
         }
+
+        const socket = connect({ hostname: proxyHost, port: proxyPort });
+        const writer = socket.writable.getWriter();
+        await writer.write(rawData);
+        writer.releaseLock();
+        return socket;
     }
+
+    let newSocket;
+
+    // 1) 显式 socks5/http 代理优先
+    if (启用SOCKS5反代 === 'socks5') {
+        newSocket = await socks5Connect(host, portNum, rawData, parsedSocks5Address);
+    } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
+        newSocket = await httpConnect(host, portNum, rawData, parsedSocks5Address);
+    } else {
+        // 2) 否则一律走 defaultProxyIP（普通 proxy ip）
+        newSocket = await connectViaDefaultProxy();
+    }
+
+    remoteConnWrapper.socket = newSocket;
+    newSocket.closed
+        .catch(() => { })
+        .finally(() => closeSocketQuietly(ws));
+
+    // 不再直连目标主机，也不需要 retryFunc
+    connectStreams(newSocket, ws, respHeader, null);
 }
 
 // 参数获取函数
