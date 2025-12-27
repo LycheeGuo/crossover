@@ -4,18 +4,6 @@ import { connect } from "cloudflare:sockets";
 const Pages静态页面 = 'https://edt-pages.github.io';
 const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 
-// [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
-const GOOGLE_SCHOLAR_PROXIES = [
-    'http://208.180.238.40:3390',
-    'http://59.127.212.110:4431',
-    'http://82.66.253.131:9080',
-    'http://46.30.160.47:7070',
-	'http://102.134.49.165:6005',
-    'http://102.134.48.240:6005',
-    'http://118.163.198.107:1168',
-    'http://211.75.210.107:1168'
-];
-
 // [变量] 模块级变量 (仅用于缓存配置)
 let config_JSON;
 
@@ -178,6 +166,16 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存自定义IP失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
+                    // ================= 新增 scholar.txt 接口 =================
+                    } else if (区分大小写访问路径 === 'admin/scholar.txt') {
+                        try {
+                            const scholarProxies = await request.text();
+                            await env.KV.put('scholar.txt', scholarProxies);
+                            return new Response(JSON.stringify({ success: true, message: '学术代理列表已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                        } catch (error) {
+                            return new Response(JSON.stringify({ error: '保存失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                        }
+                    // =======================================================
                     } else return new Response(JSON.stringify({ error: '不支持的POST请求路径' }), { status: 404, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 } else if (访问路径 === 'admin/config.json') {
                     return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -185,6 +183,11 @@ export default {
                     let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
                     if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
                     return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
+                // ================= 新增 scholar.txt 读取接口 =================
+                } else if (区分大小写访问路径 === 'admin/scholar.txt') {
+                     const scholarProxies = await env.KV.get('scholar.txt') || '';
+                     return new Response(scholarProxies, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
+                // ===========================================================
                 } else if (访问路径 === 'admin/cf.json') {
                     return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 }
@@ -329,7 +332,7 @@ export default {
         } else if (管理员密码) {// ws代理
             // 解析本次请求的代理参数 (防止并发污染)
             const proxyParams = await 反代参数获取(request);
-            return await 处理WS请求(request, userID, proxyParams, 当前反代IP);
+            return await 处理WS请求(request, userID, proxyParams, 当前反代IP, env);
         }
 
         let 伪装页URL = env.URL || 'nginx';
@@ -353,7 +356,7 @@ export default {
 };
 
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
+async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP, env) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();
@@ -402,34 +405,47 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
-            // [核心分流逻辑] - 拦截 Scholar (使用硬编码列表 + 重试机制)
+            // [核心分流逻辑] - 拦截 Scholar (KV 动态读取版)
             // -----------------------------------------------------------
-            if (hostname.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
-                const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
-                const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
+            if (hostname.includes('scholar.google.com')) {
+                let scholarProxiesList = [];
+                try {
+                    // 读取 KV 中的 scholar.txt
+                    const kvContent = await env.KV.get('scholar.txt');
+                    if (kvContent) {
+                         // 按换行符分割，去空，去空格
+                        scholarProxiesList = kvContent.split('\n').map(x => x.trim()).filter(x => x);
+                    }
+                } catch(e) {}
+
+                if (scholarProxiesList.length > 0) {
+                    const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
+                    const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
                
-                // [重试机制] 尝试最多3次，每次随机选择不同的代理
-                const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
-                const triedProxies = new Set();
-               
-                for (let attempt = 0; attempt < maxRetries; attempt++) {
-                    try {
-                        // 从未尝试过的代理中随机选择一个
-                        const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
-                        if (availableProxies.length === 0) break; // 所有代理都已尝试
+                    // [重试机制] 尝试最多3次，每次随机选择不同的代理
+                    const maxRetries = Math.min(3, scholarProxiesList.length);
+                    const triedProxies = new Set();
+                    let connectSuccess = false;
+
+                    for (let attempt = 0; attempt < maxRetries; attempt++) {
+                        try {
+                            const availableProxies = scholarProxiesList.filter(proxy => !triedProxies.has(proxy));
+                            if (availableProxies.length === 0) break;
                        
-                        const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
-                        triedProxies.add(randomAIP);
+                            const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
+                            triedProxies.add(randomAIP);
                        
-                        await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
-                        return; // 成功连接，立即返回
-                    } catch (e) {
-                        console.error(`Scholar 代理连接失败 (尝试 ${attempt + 1}/${maxRetries}): ${e.message}`);
-                        // 继续下一次重试
+                            await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
+                            connectSuccess = true;
+                            return; // 成功连接，立即返回
+                        } catch (e) {
+                            // 继续下一次重试
+                        }
+                    }
+                    if (!connectSuccess) {
+                        // console.error('All Scholar proxies failed, falling back to regular TCP connection');
                     }
                 }
-                // 所有Scholar代理都失败后，记录日志并继续执行下方的常规TCP连接逻辑
-                console.error('All Scholar proxies failed, falling back to regular TCP connection');
             }
             // -----------------------------------------------------------
 
@@ -1538,4 +1554,3 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
-
