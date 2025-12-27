@@ -1287,7 +1287,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     return config_JSON;
 }
 
-async function 生成随机IP(request, count = 16, 指定端口 = -1) {
+async function 生成随机IP(request, count = 30, 指定端口 = -1) {
     const asnMap = { '9808': 'cmcc', '4837': 'cu', '4134': 'ct' }, asn = request.cf.asn;
     const cidr_url = asnMap[asn] ? `https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/${asnMap[asn]}.txt` : 'https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt';
     const cfname = { '9808': 'CF移动优选', '4837': 'CF联通优选', '4134': 'CF电信优选' }[asn] || 'CF官方优选';
@@ -1538,3 +1538,4 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
