@@ -239,7 +239,7 @@ export default {
                         const 节点路径 = config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH;
                         const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
                         
-                        // [修改] 解除数量限制，使用配置中的数量，默认为25
+                        // [配置] 自适应数量逻辑：仅用于随机生成时的初始数量，后续不再截断
                         const 需要的IP数量 = config_JSON.优选订阅生成.本地IP库.随机数量 || 25;
                         const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
                         
@@ -255,8 +255,8 @@ export default {
                             const 优选API的IP = await 请求优选API(优选API, '443', 1500);
                             let 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
                             
-                            // [修改] 解除强制截断，使用配置数量进行截断
-                            if(完整优选IP.length > 需要的IP数量) 完整优选IP = 完整优选IP.slice(0, 需要的IP数量);
+                            // [修改] 已移除截断逻辑 (slice)，现在会显示所有有效的节点 (自适应数量)
+                            // if(完整优选IP.length > 需要的IP数量) 完整优选IP = 完整优选IP.slice(0, 需要的IP数量);
                             
                             订阅内容 = 完整优选IP.map((原始地址, index) => {
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
@@ -268,18 +268,9 @@ export default {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
                                    
-                                    // [修改] 扩充国家/地区列表，支持40个国家代号，循环使用
-                                    // 支持最多 40 * 5 = 200 个节点而不重复地区
-                                    const regionMap = [
-                                        'HK', 'US', 'SG', 'JP', 'KR', 'TW', 'UK', 'DE', 'FR', 'CA',
-                                        'AU', 'BR', 'IN', 'NL', 'TR', 'IT', 'RU', 'VN', 'TH', 'ID',
-                                        'MY', 'PH', 'ES', 'PT', 'SE', 'NO', 'DK', 'FI', 'PL', 'CZ',
-                                        'CH', 'AT', 'BE', 'IE', 'NZ', 'MX', 'AR', 'CL', 'ZA', 'EG'
-                                    ];
-                                    const regionIndex = Math.floor(index / 5) % regionMap.length; 
-                                    const regionName = regionMap[regionIndex]; 
-                                    const number = (index % 5) + 1;
-                                    节点备注 = `${regionName} ${String(number).padStart(2, '0')}`;
+                                    // [修改] 随机命名逻辑
+                                    const 随机字符 = Math.random().toString(36).substring(2, 8).toUpperCase(); // 生成6位随机大写字符
+                                    节点备注 = `Node_${随机字符}`;
                                 } else {
                                     return null;
                                 }
@@ -1537,4 +1528,6 @@ async function html1101(host, 访问IP) {
   </script> 
 </body>
 </html>`;
+}
+
 }
