@@ -166,7 +166,7 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存自定义IP失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
-                    // ================= 新增 scholar.txt 接口 =================
+                    // ================= 新增 scholar.txt 接口 (KV 管理方式) =================
                     } else if (区分大小写访问路径 === 'admin/scholar.txt') {
                         try {
                             const scholarProxies = await request.text();
@@ -175,7 +175,7 @@ export default {
                         } catch (error) {
                             return new Response(JSON.stringify({ error: '保存失败: ' + error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
-                    // =======================================================
+                    // =================================================================
                     } else return new Response(JSON.stringify({ error: '不支持的POST请求路径' }), { status: 404, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 } else if (访问路径 === 'admin/config.json') {
                     return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -405,24 +405,38 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP, en
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
-            // [核心分流逻辑] - 拦截 Scholar (KV 动态读取版)
+            // [核心分流逻辑] - 拦截 Scholar (优先读环境变量 -> 其次读 KV)
             // -----------------------------------------------------------
             if (hostname.includes('scholar.google.com')) {
                 let scholarProxiesList = [];
-                try {
-                    // 读取 KV 中的 scholar.txt
-                    const kvContent = await env.KV.get('scholar.txt');
-                    if (kvContent) {
-                         // 按换行符分割，去空，去空格
-                        scholarProxiesList = kvContent.split('\n').map(x => x.trim()).filter(x => x);
-                    }
-                } catch(e) {}
 
+                // 【方式一：优先读取 Cloudflare Pages 环境变量】
+                // 支持用 换行、逗号 或 分号 分割多个代理
+                if (env.SCHOLAR_PROXIES) {
+                    try {
+                        scholarProxiesList = env.SCHOLAR_PROXIES.split(/[\n,;]+/)
+                            .map(x => x.trim())
+                            .filter(x => x); // 过滤空行
+                    } catch (e) {
+                        // console.error('解析环境变量 SCHOLAR_PROXIES 失败', e);
+                    }
+                }
+
+                // 【方式二：如果环境变量没配，尝试从 KV 读取】
+                if (scholarProxiesList.length === 0 && env.KV) {
+                    try {
+                        const kvContent = await env.KV.get('scholar.txt');
+                        if (kvContent) {
+                            scholarProxiesList = kvContent.split('\n').map(x => x.trim()).filter(x => x);
+                        }
+                    } catch(e) {}
+                }
+
+                // 开始连接逻辑
                 if (scholarProxiesList.length > 0) {
                     const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
                     const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
                
-                    // [重试机制] 尝试最多3次，每次随机选择不同的代理
                     const maxRetries = Math.min(3, scholarProxiesList.length);
                     const triedProxies = new Set();
                     let connectSuccess = false;
@@ -437,14 +451,12 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP, en
                        
                             await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
                             connectSuccess = true;
-                            return; // 成功连接，立即返回
+                            return; 
                         } catch (e) {
-                            // 继续下一次重试
+                            // 重试下一条
                         }
                     }
-                    if (!connectSuccess) {
-                        // console.error('All Scholar proxies failed, falling back to regular TCP connection');
-                    }
+                    // if (!connectSuccess) console.error('所有 Scholar 代理均失败');
                 }
             }
             // -----------------------------------------------------------
