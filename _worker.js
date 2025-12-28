@@ -10,7 +10,7 @@ const GOOGLE_SCHOLAR_PROXIES = [
     'http://59.127.212.110:4431',
     'http://82.66.253.131:9080',
     'http://46.30.160.47:7070',
-	'http://102.134.49.165:6005',
+    'http://102.134.49.165:6005',
     'http://102.134.48.240:6005',
     'http://118.163.198.107:1168',
     'http://211.75.210.107:1168'
@@ -73,7 +73,7 @@ export default {
                 const cookies = request.headers.get('Cookie') || '';
                 const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
                 if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
-               
+                
                 // 加载配置
                 config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
 
@@ -267,7 +267,7 @@ export default {
                                 if (match) {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
-                                   
+                                    
                                     // [修改] 扩充国家/地区列表，支持40个国家代号，循环使用
                                     // 支持最多 40 * 5 = 200 个节点而不重复地区
                                     const regionMap = [
@@ -398,7 +398,7 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             const { hasError, message, port, hostname, rawIndex, version, isUDP, rawClientData } = parsedInfo;
 
             if (hasError) return;
-           
+            
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
@@ -407,20 +407,20 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             if (hostname.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
                 const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
                 const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
-               
+                
                 // [重试机制] 尝试最多3次，每次随机选择不同的代理
                 const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
                 const triedProxies = new Set();
-               
+                
                 for (let attempt = 0; attempt < maxRetries; attempt++) {
                     try {
                         // 从未尝试过的代理中随机选择一个
                         const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
                         if (availableProxies.length === 0) break; // 所有代理都已尝试
-                       
+                        
                         const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
                         triedProxies.add(randomAIP);
-                       
+                        
                         await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
                         return; // 成功连接，立即返回
                     } catch (e) {
@@ -442,7 +442,7 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             const respHeader = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
 
             if (isDnsQuery) return forwardataudp(rawPayload, serverSock, respHeader);
-           
+            
             await forwardataTCP(hostname, port, rawPayload, serverSock, respHeader, remoteConnWrapper, defaultProxyIP, proxyParams);
         },
     })).catch((err) => {});
@@ -1317,10 +1317,12 @@ async function 整理成数组(内容) {
     return 地址数组;
 }
 
-// [优化] 1500ms 超时
+// [修改] 自动扩展所有 HTTPS 端口的请求优选API函数
 async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) {
     if (!urls?.length) return [];
     const results = new Set();
+    const httpsPorts = [443, 2053, 2083, 2087, 2096, 8443]; // 定义扩展端口
+
     await Promise.allSettled(urls.map(async (url) => {
         try {
             const controller = new AbortController();
@@ -1364,6 +1366,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
             const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
             const isCSV = lines.length > 1 && lines[0].includes(',');
             const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
+            const urlSpecifiedPort = new URL(url).searchParams.get('port'); // 检查URL是否指定端口
+
             if (!isCSV) {
                 lines.forEach(line => {
                     const hashIndex = line.indexOf('#');
@@ -1375,8 +1379,17 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
                         const colonIndex = hostPart.lastIndexOf(':');
                         hasPort = colonIndex > -1 && /^\d+$/.test(hostPart.substring(colonIndex + 1));
                     }
-                    const port = new URL(url).searchParams.get('port') || 默认端口;
-                    results.add(hasPort ? line : `${hostPart}:${port}${remark}`);
+                    
+                    if (hasPort) {
+                        results.add(line);
+                    } else if (urlSpecifiedPort) {
+                        results.add(`${hostPart}:${urlSpecifiedPort}${remark}`);
+                    } else {
+                        // 如果没有端口，遍历扩展所有 HTTPS 端口
+                        httpsPorts.forEach(port => {
+                            results.add(`${hostPart}:${port}${remark}`);
+                        });
+                    }
                 });
             } else {
                 const headers = lines[0].split(',').map(h => h.trim());
@@ -1396,11 +1409,19 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
                     const ipIdx = headers.findIndex(h => h.includes('IP'));
                     const delayIdx = headers.findIndex(h => h.includes('延迟'));
                     const speedIdx = headers.findIndex(h => h.includes('下载速度'));
-                    const port = new URL(url).searchParams.get('port') || 默认端口;
+                    
                     dataLines.forEach(line => {
                         const cols = line.split(',').map(c => c.trim());
                         const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-                        results.add(`${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
+                        
+                        if (urlSpecifiedPort) {
+                            results.add(`${wrappedIP}:${urlSpecifiedPort}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
+                        } else {
+                            // 遍历扩展所有 HTTPS 端口
+                            httpsPorts.forEach(port => {
+                                results.add(`${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
+                            });
+                        }
                     });
                 }
             }
@@ -1438,32 +1459,32 @@ async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
 //////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
 async function nginx() {
     return `
-	<!DOCTYPE html>
-	<html>
-	<head>
-	<title>Welcome to nginx!</title>
-	<style>
-		body {
-			width: 35em;
-			margin: 0 auto;
-			font-family: Tahoma, Verdana, Arial, sans-serif;
-		}
-	</style>
-	</head>
-	<body>
-	<h1>Welcome to nginx!</h1>
-	<p>If you see this page, the nginx web server is successfully installed and
-	working. Further configuration is required.</p>
-	
-	<p>For online documentation and support please refer to
-	<a href="http://nginx.org/">nginx.org</a>.<br/>
-	Commercial support is available at
-	<a href="http://nginx.com/">nginx.com</a>.</p>
-	
-	<p><em>Thank you for using nginx.</em></p>
-	</body>
-	</html>
-	`
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <title>Welcome to nginx!</title>
+    <style>
+        body {
+            width: 35em;
+            margin: 0 auto;
+            font-family: Tahoma, Verdana, Arial, sans-serif;
+        }
+    </style>
+    </head>
+    <body>
+    <h1>Welcome to nginx!</h1>
+    <p>If you see this page, the nginx web server is successfully installed and
+    working. Further configuration is required.</p>
+    
+    <p>For online documentation and support please refer to
+    <a href="http://nginx.org/">nginx.org</a>.<br/>
+    Commercial support is available at
+    <a href="http://nginx.com/">nginx.com</a>.</p>
+    
+    <p><em>Thank you for using nginx.</em></p>
+    </body>
+    </html>
+    `
 }
 
 async function html1101(host, 访问IP) {
@@ -1509,12 +1530,12 @@ async function html1101(host, 访问IP) {
                         <h2 data-translate="what_happened">What happened?</h2>
                             <p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
                     </div>
-                   
+                    
                     <div class="cf-column">
                         <h2 data-translate="what_can_i_do">What can I do?</h2>
                             <p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
                     </div>
-                   
+                    
                 </div>
             </div><div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
     <p class="text-13">
@@ -1538,6 +1559,3 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
-
-
-
