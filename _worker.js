@@ -4,7 +4,7 @@ import { connect } from "cloudflare:sockets";
 const Pages静态页面 = 'https://edt-pages.github.io';
 const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 
-// [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
+// [配置] 谷歌学术专用代理池 (硬编码，负载均衡) - 保持不动
 const GOOGLE_SCHOLAR_PROXIES = [
     'http://208.180.238.40:3390',
     'http://59.127.212.110:4431',
@@ -183,7 +183,7 @@ export default {
                     return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 } else if (区分大小写访问路径 === 'admin/ADD.txt') {
                     let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
-                    if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
+                    if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, env, ctx, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
                     return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
                 } else if (访问路径 === 'admin/cf.json') {
                     return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -196,23 +196,63 @@ export default {
                 响应.headers.set('Set-Cookie', 'auth=; Path=/; Max-Age=0; HttpOnly');
                 return 响应;
             
-            // [新增] 简易测速页面
+            // [新增] 增强版测速页面 - 现在会显示真实生成的IP
             } else if (访问路径 === 'speedtest') {
+                // 1. 确保配置已加载
+                config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
+                const 需要的IP数量 = config_JSON.优选订阅生成.本地IP库.随机数量 || 25;
+                
+                // 2. 调用优化后的生成函数
+                const [ipList, ipString] = await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口);
+                
+                // 3. 检查 KV 状态用于展示
+                let kvStatus = "未检测";
+                if (env.KV) {
+                    const asnMap = { '9808': 'cmcc', '4837': 'cu', '4134': 'ct' };
+                    const asn = request.cf.asn;
+                    const cacheKey = `CIDR_${asnMap[asn] || 'default'}`;
+                    const cached = await env.KV.get(cacheKey);
+                    kvStatus = cached ? "✅ 已缓存 (速度优化生效中)" : "⚠️ 未缓存 (正在从CDN获取)";
+                }
+
                 const html = `
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>优选 IP 测速</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>优选节点调试</title>
                     <style>
-                        body { font-family: sans-serif; padding: 20px; background: #222; color: #fff; }
-                        h2 { color: #0f0; }
+                        body { font-family: 'Courier New', monospace; padding: 20px; background: #000; color: #0f0; line-height: 1.5; }
+                        .box { border: 1px solid #333; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+                        h2 { color: #fff; border-bottom: 1px solid #333; padding-bottom: 10px; }
+                        .info { color: #aaa; margin-bottom: 10px; font-size: 0.9em; }
+                        .highlight { color: #ff0; }
+                        textarea { width: 100%; height: 300px; background: #111; color: #0f0; border: 1px solid #333; padding: 10px; font-family: inherit; }
                     </style>
                 </head>
                 <body>
-                    <h2>本地优选 IP 测速</h2>
-                    <div>请在 V2RayN / Clash 客户端中添加订阅进行真连接测速。</div>
-                    <div>这是最准确的方式。</div>
+                    <h2>🚀 节点生成调试 & 测速</h2>
+                    
+                    <div class="box">
+                        <div>您的 IP: <span class="highlight">${request.headers.get('CF-Connecting-IP')}</span></div>
+                        <div>您的地区: <span class="highlight">${request.cf.country}</span> (ASN: ${request.cf.asn})</div>
+                        <div>KV 缓存状态: <span class="highlight">${kvStatus}</span></div>
+                        <div>当前生成数量: ${需要的IP数量}</div>
+                    </div>
+
+                    <div class="box">
+                        <h3>📋 生成的优选 IP 列表 (已按地区排序)</h3>
+                        <div class="info">这些 IP 将用于您的订阅链接。如果您的地区匹配，相关节点已自动置顶。</div>
+                        <textarea readonly>${ipString}</textarea>
+                    </div>
+
+                    <div class="box">
+                        <h3>⚡ 如何测速？</h3>
+                        <div class="info">由于浏览器限制，网页无法直接进行 TCP Ping 或真连接测速。</div>
+                        <div>请复制上方 IP 列表，或直接在 <b>V2RayN / Clash</b> 客户端中添加订阅链接进行“真连接测速”。</div>
+                        <div>这是最准确的方式。</div>
+                    </div>
                 </body>
                 </html>
                 `;
@@ -264,7 +304,7 @@ export default {
                         
                         const 需要的IP数量 = config_JSON.优选订阅生成.本地IP库.随机数量 || 25;
                         
-                        // 使用 [优化] 后的生成随机IP函数，支持 KV 缓存 + CDN
+                        // [关键修改] 调用优化后的生成随机IP函数，传入 env, ctx
                         const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
                         
                         const 优选API = [], 优选IP = [], 其他节点 = [];
@@ -1322,7 +1362,7 @@ async function 生成随机IP(request, env, ctx, count = 25, 指定端口 = -1) 
     const asn = request.cf.asn;
     // 使用 jsdelivr CDN 加速 GitHub 文件下载
     const cidr_url = asnMap[asn] ? `https://cdn.jsdelivr.net/gh/cmliu/cmliu@main/CF-CIDR/${asnMap[asn]}.txt` : 'https://cdn.jsdelivr.net/gh/cmliu/cmliu@main/CF-CIDR.txt';
-    const cfname = { '9808': 'CF移动', '4837': 'CF联通', '4134': 'CF电信' }[asn] || 'CF优选';
+    const cfname = { '9808': 'CF移动优选', '4837': 'CF联通优选', '4134': 'CF电信优选' }[asn] || 'CF官方优选';
     const cfport = [443, 2053, 2083, 2087, 2096, 8443];
     
     let cidrList = [];
