@@ -6,7 +6,8 @@ const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*load
 
 // [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
 const GOOGLE_SCHOLAR_PROXIES = [
-    'http://114.94.148.37'
+    'http://208.180.238.40:3390',
+    'http://59.127.212.110:4431'
 ];
 
 // [变量] 模块级变量 (仅用于缓存配置)
@@ -1617,6 +1618,7 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
 
 
 
