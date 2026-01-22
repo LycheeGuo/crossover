@@ -2,12 +2,11 @@ import { connect } from "cloudflare:sockets";
 
 // [配置] 静态资源页面
 const Pages静态页面 = 'https://edt-pages.github.io';
+const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 
 // [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
-// 如果这些代理失效，请自行替换为有效的 HTTP/SOCKS5 代理
 const GOOGLE_SCHOLAR_PROXIES = [
-    'http://208.180.238.40:3390',
-    'http://59.127.212.110:4431'
+    'http://94.184.25.34:243'
 ];
 
 // [变量] 模块级变量 (仅用于缓存配置)
@@ -40,22 +39,15 @@ export default {
 
         if (!upgradeHeader || upgradeHeader !== 'websocket') {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
-            
-            // 检查 KV 和 密码是否存在
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
             if (!env.KV) return fetch(Pages静态页面 + '/noKV').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
-            
             const 访问路径 = url.pathname.slice(1).toLowerCase();
             const 区分大小写访问路径 = url.pathname.slice(1);
-
-            // 快速订阅入口
             if (访问路径 === 加密秘钥 && 加密秘钥 !== '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改') {
                 const params = new URLSearchParams(url.search);
                 params.set('token', await MD5MD5(host + userID));
                 return new Response('重定向中...', { status: 302, headers: { 'Location': `/sub?${params.toString()}` } });
-            } 
-            // 登录页面
-            else if (访问路径 === 'login') {
+            } else if (访问路径 === 'login') {
                 const cookies = request.headers.get('Cookie') || '';
                 const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
                 if (authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
@@ -70,13 +62,11 @@ export default {
                     }
                 }
                 return fetch(Pages静态页面 + '/login');
-            } 
-            // 管理后台
-            else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {
+            } else if (访问路径 === 'admin' || 访问路径.startsWith('admin/')) {
                 const cookies = request.headers.get('Cookie') || '';
                 const authCookie = cookies.split(';').find(c => c.trim().startsWith('auth='))?.split('=')[1];
                 if (!authCookie || authCookie !== await MD5MD5(UA + 加密秘钥 + 管理员密码)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
-                
+               
                 // 加载配置
                 config_JSON = await 读取config_JSON(env, host, userID, env.PATH);
 
@@ -102,6 +92,16 @@ export default {
                         }
                     }
                     return new Response(JSON.stringify({ success: false, data: [] }, null, 2), { status: 403, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                } else if (访问路径 === 'admin/check') {
+                    let 检测代理响应;
+                    if (url.searchParams.has('socks5')) {
+                        检测代理响应 = await SOCKS5可用性验证('socks5', url.searchParams.get('socks5'));
+                    } else if (url.searchParams.has('http')) {
+                        检测代理响应 = await SOCKS5可用性验证('http', url.searchParams.get('http'));
+                    } else {
+                        return new Response(JSON.stringify({ error: '缺少代理参数' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                    }
+                    return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                 } else if (访问路径 === 'admin/init') {
                     try {
                         config_JSON = await 读取config_JSON(env, host, userID, env.PATH, true);
@@ -176,7 +176,7 @@ export default {
                     return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 } else if (区分大小写访问路径 === 'admin/ADD.txt') {
                     let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
-                    if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, env, ctx, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
+                    if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
                     return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
                 } else if (访问路径 === 'admin/cf.json') {
                     return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -188,12 +188,6 @@ export default {
                 const 响应 = new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
                 响应.headers.set('Set-Cookie', 'auth=; Path=/; Max-Age=0; HttpOnly');
                 return 响应;
-            
-            // 简易测速页面
-            } else if (访问路径 === 'speedtest') {
-                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>优选 IP 测速</title><style>body { font-family: sans-serif; padding: 20px; background: #222; color: #fff; }h2 { color: #0f0; }</style></head><body><h2>本地优选 IP 测速</h2><div>请在 V2RayN / Clash 客户端中添加订阅进行真连接测速。</div><div>这是最准确的方式。</div></body></html>`;
-                return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-
             } else if (访问路径 === 'sub') {
                 const 订阅TOKEN = await MD5MD5(host + userID);
                 if (url.searchParams.get('token') === 订阅TOKEN) {
@@ -234,16 +228,13 @@ export default {
                     if (!ua.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
                     const 协议类型 = (url.searchParams.has('surge') || ua.includes('surge')) ? 'tro' + 'jan' : config_JSON.协议类型;
                     let 订阅内容 = '';
-                    
-                    // ================= 核心：生成 VLESS 节点列表 =================
                     if (订阅类型 === 'mixed') {
                         const 节点路径 = config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH;
                         const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
                         
+                        // [修改] 解除数量限制，使用配置中的数量，默认为25
                         const 需要的IP数量 = config_JSON.优选订阅生成.本地IP库.随机数量 || 25;
-                        
-                        // 使用 [优化] 后的生成随机IP函数，支持 KV 缓存 + CDN
-                        const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
+                        const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
                         
                         const 优选API = [], 优选IP = [], 其他节点 = [];
                         for (const 元素 of 完整优选列表) {
@@ -251,16 +242,16 @@ export default {
                             else if (元素.toLowerCase().includes('://')) 其他节点.push(元素);
                             else 优选IP.push(元素);
                         }
-                        const 其他节点LINK = 其他节点.join('\n');
-                        
+                        const 其他节点LINK = 其他节点.join('\n') + '\n';
                         if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { 
-                            // 修正请求超时，避免 No Nodes
-                            const 优选API的IP = await 请求优选API(优选API, '443', 1000); 
+                            // [优化] 超时设置 1500ms
+                            const 优选API的IP = await 请求优选API(优选API, '443', 1500);
                             let 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
                             
+                            // [修改] 解除强制截断，使用配置数量进行截断
                             if(完整优选IP.length > 需要的IP数量) 完整优选IP = 完整优选IP.slice(0, 需要的IP数量);
                             
-                            const 生成的节点列表 = 完整优选IP.map((原始地址, index) => {
+                            订阅内容 = 完整优选IP.map((原始地址, index) => {
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
                                 const match = 原始地址.match(regex);
 
@@ -269,16 +260,15 @@ export default {
                                 if (match) {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
-                                    
-                                    // [优化] 地区列表
-                                    let regionMap = ['HK', 'US', 'SG', 'JP', 'KR', 'TW', 'UK', 'DE', 'FR', 'CA', 'AU', 'BR', 'IN', 'NL', 'TR', 'IT', 'RU', 'VN', 'TH', 'ID', 'MY', 'PH', 'ES', 'PT', 'SE', 'NO', 'DK', 'FI', 'PL', 'CZ'];
-                                    
-                                    // [优化] 地区优先感知
-                                    const userCountry = request.cf.country;
-                                    if (userCountry && regionMap.includes(userCountry)) {
-                                        regionMap = [userCountry, ...regionMap.filter(r => r !== userCountry)];
-                                    }
-
+                                   
+                                    // [修改] 扩充国家/地区列表，支持40个国家代号，循环使用
+                                    // 支持最多 40 * 5 = 200 个节点而不重复地区
+                                    const regionMap = [
+                                        'HK', 'US', 'SG', 'JP', 'KR', 'TW', 'UK', 'DE', 'FR', 'CA',
+                                        'AU', 'BR', 'IN', 'NL', 'TR', 'IT', 'RU', 'VN', 'TH', 'ID',
+                                        'MY', 'PH', 'ES', 'PT', 'SE', 'NO', 'DK', 'FI', 'PL', 'CZ',
+                                        'CH', 'AT', 'BE', 'IE', 'NZ', 'MX', 'AR', 'CL', 'ZA', 'EG'
+                                    ];
                                     const regionIndex = Math.floor(index / 5) % regionMap.length; 
                                     const regionName = regionMap[regionIndex]; 
                                     const number = (index % 5) + 1;
@@ -289,56 +279,39 @@ export default {
                                 const 节点HOST = 随机替换通配符(host);
                                 return `${协议类型}://${config_JSON.UUID}@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议}&host=${节点HOST}&sni=${节点HOST}&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
                             }).filter(item => item !== null).join('\n');
-                            
-                            // 合并内容
-                            const 原始内容 = (其他节点LINK ? 其他节点LINK + '\n' : '') + 生成的节点列表;
-                            // 对于 mixed 模式，最后输出 base64
-                            订阅内容 = btoa(原始内容);
+                            订阅内容 = btoa(其他节点LINK + 订阅内容);
                         } else { 
                             let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
                             优选订阅生成器HOST = 优选订阅生成器HOST && !/^https?:\/\//i.test(优选订阅生成器HOST) ? `https://${优选订阅生成器HOST}` : 优选订阅生成器HOST;
                             const 优选订阅生成器URL = `${优选订阅生成器HOST}/sub?host=example.com&${协议类型 === ('v' + 'le' + 'ss') ? 'uuid' : 'pw'}=00000000-0000-4000-8000-000000000000&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径() + 节点路径 : 节点路径) + TLS分片参数}&type=${config_JSON.传输协议}`;
                             try {
                                 const response = await fetch(优选订阅生成器URL, { headers: { 'User-Agent': 'v2rayN/edge' + 'tunnel (https://github.com/cmliu/edge' + 'tunnel)' } });
-                                if (response.ok) 订阅内容 = btoa((其他节点LINK ? 其他节点LINK + '\n' : '') + atob(await response.text()));
+                                if (response.ok) 订阅内容 = btoa(其他节点LINK + atob(await response.text()));
                                 else return new Response('优选订阅生成器异常：' + response.statusText, { status: response.status });
                             } catch (error) {
                                 return new Response('优选订阅生成器异常：' + error.message, { status: 403 });
                             }
                         }
                     } else { 
-                        // [订阅转换后端调用]
-                        // 构造回源 URL。这里必须确保指向 mixed 模式，以便后端能拉取到 raw 节点列表
-                        const mySubUrl = url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : '');
-                        const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(mySubUrl)}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
-                        
+                        // [固定后端]
+                        const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
                         try {
-                            const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel' } });
+                            const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel(https://github.com/cmliu/edge' + 'tunnel)' } });
                             if (response.ok) {
                                 订阅内容 = await response.text();
                                 if (url.searchParams.has('surge') || ua.includes('surge')) 订阅内容 = surge(订阅内容, url.protocol + '//' + url.host + '/sub?token=' + 订阅TOKEN + '&surge', config_JSON);
-                            } else return new Response('订阅转换后端异常：' + response.statusText + ' | 请检查 SUBAPI 是否可用', { status: response.status });
+                            } else return new Response('订阅转换后端异常：' + response.statusText, { status: response.status });
                         } catch (error) {
                             return new Response('订阅转换后端异常：' + error.message, { status: 403 });
                         }
                     }
-                    
-                    // 域名替换逻辑
                     if (订阅类型 === 'mixed') {
                         订阅内容 = 批量替换域名(atob(订阅内容).replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID), host);
-                        // 如果是浏览器访问且没要求 base64，可以不编码方便查看，但标准订阅需要编码
-                        if (!ua.includes('mozilla') || url.searchParams.has('b64')) 订阅内容 = btoa(订阅内容);
-                    } else {
-                        订阅内容 = 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID), host);
-                    }
-
+                        if (!ua.includes('mozilla')) 订阅内容 = btoa(订阅内容);
+                    } else 订阅内容 = 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID), host);
                     if (订阅类型 === 'singbox') {
-                         try {
-                             订阅内容 = JSON.stringify(JSON.parse(订阅内容), null, 2);
-                             responseHeaders["content-type"] = 'application/json; charset=utf-8';
-                         } catch(e) {
-                             // 如果转换失败返回原文
-                         }
+                        订阅内容 = JSON.stringify(JSON.parse(订阅内容), null, 2);
+                        responseHeaders["content-type"] = 'application/json; charset=utf-8';
                     } else if (订阅类型 === 'clash') {
                         responseHeaders["content-type"] = 'application/x-yaml; charset=utf-8';
                     }
@@ -418,7 +391,7 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             const { hasError, message, port, hostname, rawIndex, version, isUDP, rawClientData } = parsedInfo;
 
             if (hasError) return;
-            
+           
             if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 
             // -----------------------------------------------------------
@@ -427,20 +400,20 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             if (hostname.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
                 const dataToProxy = 判断是否是木马 ? rawClientData : chunk.slice(rawIndex);
                 const headerToClient = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
-                
+               
                 // [重试机制] 尝试最多3次，每次随机选择不同的代理
                 const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
                 const triedProxies = new Set();
-                
+               
                 for (let attempt = 0; attempt < maxRetries; attempt++) {
                     try {
                         // 从未尝试过的代理中随机选择一个
                         const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
                         if (availableProxies.length === 0) break; // 所有代理都已尝试
-                        
+                       
                         const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
                         triedProxies.add(randomAIP);
-                        
+                       
                         await connectToScholarProxy(hostname, port, dataToProxy, serverSock, headerToClient, remoteConnWrapper, randomAIP);
                         return; // 成功连接，立即返回
                     } catch (e) {
@@ -462,7 +435,7 @@ async function 处理WS请求(request, yourUUID, proxyParams, defaultProxyIP) {
             const respHeader = 判断是否是木马 ? null : new Uint8Array([version[0], 0]);
 
             if (isDnsQuery) return forwardataudp(rawPayload, serverSock, respHeader);
-            
+           
             await forwardataTCP(hostname, port, rawPayload, serverSock, respHeader, remoteConnWrapper, defaultProxyIP, proxyParams);
         },
     })).catch((err) => {});
@@ -1187,7 +1160,7 @@ function 批量替换域名(内容, host, 每组数量 = 2) {
     });
 }
 
-async function 读取config_JSON(env, hostname, userID, path, 重置配置 = false) {
+async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     const host = 随机替换通配符(hostname);
     const 初始化开始时间 = performance.now();
     const 默认配置JSON = {
@@ -1204,7 +1177,7 @@ async function 读取config_JSON(env, hostname, userID, path, 重置配置 = fal
             local: true, 
             本地IP库: {
                 随机IP: true, 
-                随机数量: 25,
+                随机数量: 25, // [强制] 25个
                 指定端口: -1,
             },
             SUB: null,
@@ -1213,10 +1186,7 @@ async function 读取config_JSON(env, hostname, userID, path, 重置配置 = fal
             TOKEN: await MD5MD5(hostname + userID),
         },
         订阅转换配置: {
-            // 如果 lychee.zeabur.app 挂了，您可以尝试使用以下备选：
-            // https://api.v1.mk
-            // https://sub.xeton.dev
-            // https://sub.id9.cc
+            // [自定义后端]
             SUBAPI: "https://lychee.zeabur.app",
             SUBCONFIG: "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/refs/heads/master/Clash/config/ACL4SSR_Online_Mini_MultiMode.ini",
             SUBEMOJI: false,
@@ -1224,6 +1194,7 @@ async function 读取config_JSON(env, hostname, userID, path, 重置配置 = fal
         反代: {
             PROXYIP: "auto",
             SOCKS5: {
+                // 注意：旧的全局配置保留但不直接用于控制，改用ENV控制
                 启用: null,
                 全局: false,
                 账号: '',
@@ -1265,7 +1236,7 @@ async function 读取config_JSON(env, hostname, userID, path, 重置配置 = fal
     config_JSON.HOST = host;
     config_JSON.UUID = userID;
     // 简化 PATH 生成逻辑
-    config_JSON.PATH = path ? path : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`);
+    config_JSON.PATH = config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`;
     
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
     config_JSON.LINK = `${config_JSON.协议类型}://${userID}@${host}:443?security=tls&type=${config_JSON.传输协议}&host=${host}&sni=${host}&path=${encodeURIComponent(config_JSON.启用0RTT ? config_JSON.PATH + '?ed=2560' : config_JSON.PATH) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&allowInsecure=1' : ''}#${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
@@ -1309,54 +1280,19 @@ async function 读取config_JSON(env, hostname, userID, path, 重置配置 = fal
     return config_JSON;
 }
 
-// [优化] CDN加速 + KV缓存 的随机IP生成函数
-async function 生成随机IP(request, env, ctx, count = 25, 指定端口 = -1) {
-    const asnMap = { '9808': 'cmcc', '4837': 'cu', '4134': 'ct' };
-    const asn = request.cf.asn;
-    // 使用 jsdelivr CDN 加速 GitHub 文件下载
-    const cidr_url = asnMap[asn] ? `https://cdn.jsdelivr.net/gh/cmliu/cmliu@main/CF-CIDR/${asnMap[asn]}.txt` : 'https://cdn.jsdelivr.net/gh/cmliu/cmliu@main/CF-CIDR.txt';
-    const cfname = { '9808': 'CF移动', '4837': 'CF联通', '4134': 'CF电信' }[asn] || 'CF优选';
+async function 生成随机IP(request, count = 16, 指定端口 = -1) {
+    const asnMap = { '9808': 'cmcc', '4837': 'cu', '4134': 'ct' }, asn = request.cf.asn;
+    const cidr_url = asnMap[asn] ? `https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/${asnMap[asn]}.txt` : 'https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt';
+    const cfname = { '9808': 'CF移动优选', '4837': 'CF联通优选', '4134': 'CF电信优选' }[asn] || 'CF官方优选';
     const cfport = [443, 2053, 2083, 2087, 2096, 8443];
-    
     let cidrList = [];
-    const cacheKey = `CIDR_${asnMap[asn] || 'default'}`;
-
-    // 1. 优先尝试从 KV 读取缓存 (有效期设为24小时)
-    try {
-        if (env.KV) {
-            const cachedCIDR = await env.KV.get(cacheKey);
-            if (cachedCIDR) {
-                cidrList = JSON.parse(cachedCIDR);
-            }
-        }
-    } catch (e) { console.error('KV读取CIDR失败', e); }
-
-    // 2. 如果 KV 没有或读取失败，从 CDN 获取并写入 KV
-    if (!cidrList || cidrList.length === 0) {
-        try {
-            const res = await fetch(cidr_url);
-            if (res.ok) {
-                cidrList = await 整理成数组(await res.text());
-                // 写入 KV，设置 86400秒 (1天) 过期
-                if (env.KV) ctx.waitUntil(env.KV.put(cacheKey, JSON.stringify(cidrList), { expirationTtl: 86400 }));
-            }
-        } catch (e) {
-            console.error('网络获取CIDR失败', e);
-        }
-    }
-
-    // 3. 实在获取不到，使用内置兜底 (防止生成空列表导致 "No nodes found")
-    if (!cidrList || cidrList.length === 0) cidrList = ['104.16.0.0/12'];
+    try { const res = await fetch(cidr_url); cidrList = res.ok ? await 整理成数组(await res.text()) : ['104.16.0.0/13']; } catch { cidrList = ['104.16.0.0/13']; }
 
     const generateRandomIPFromCIDR = (cidr) => {
-        const [baseIP, prefixLength] = cidr.split('/');
-        const prefix = parseInt(prefixLength);
-        const hostBits = 32 - prefix;
-        const ipParts = baseIP.split('.').map(Number);
-        const ipInt = (ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3];
+        const [baseIP, prefixLength] = cidr.split('/'), prefix = parseInt(prefixLength), hostBits = 32 - prefix;
+        const ipInt = baseIP.split('.').reduce((a, p, i) => a | (parseInt(p) << (24 - i * 8)), 0);
         const randomOffset = Math.floor(Math.random() * Math.pow(2, hostBits));
-        // 使用无符号右移保证正整数
-        const randomIP = ((ipInt + randomOffset) >>> 0);
+        const mask = (0xFFFFFFFF << hostBits) >>> 0, randomIP = (((ipInt & mask) >>> 0) + randomOffset) >>> 0;
         return [(randomIP >>> 24) & 0xFF, (randomIP >>> 16) & 0xFF, (randomIP >>> 8) & 0xFF, randomIP & 0xFF].join('.');
     };
 
@@ -1366,7 +1302,6 @@ async function 生成随机IP(request, env, ctx, count = 25, 指定端口 = -1) 
     });
     return [randomIPs, randomIPs.join('\n')];
 }
-
 async function 整理成数组(内容) {
     var 替换后的内容 = 内容.replace(/[	"'\r\n]+/g, ',').replace(/,+/g, ',');
     if (替换后的内容.charAt(0) == ',') 替换后的内容 = 替换后的内容.slice(1);
@@ -1375,12 +1310,10 @@ async function 整理成数组(内容) {
     return 地址数组;
 }
 
-// [修改] 自动扩展所有 HTTPS 端口的请求优选API函数
+// [优化] 1500ms 超时
 async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) {
     if (!urls?.length) return [];
     const results = new Set();
-    const httpsPorts = [443, 2053, 2083, 2087, 2096, 8443]; // 定义扩展端口
-
     await Promise.allSettled(urls.map(async (url) => {
         try {
             const controller = new AbortController();
@@ -1424,8 +1357,6 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
             const lines = text.trim().split('\n').map(l => l.trim()).filter(l => l);
             const isCSV = lines.length > 1 && lines[0].includes(',');
             const IPV6_PATTERN = /^[^\[\]]*:[^\[\]]*:[^\[\]]/;
-            const urlSpecifiedPort = new URL(url).searchParams.get('port'); // 检查URL是否指定端口
-
             if (!isCSV) {
                 lines.forEach(line => {
                     const hashIndex = line.indexOf('#');
@@ -1437,17 +1368,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
                         const colonIndex = hostPart.lastIndexOf(':');
                         hasPort = colonIndex > -1 && /^\d+$/.test(hostPart.substring(colonIndex + 1));
                     }
-                    
-                    if (hasPort) {
-                        results.add(line);
-                    } else if (urlSpecifiedPort) {
-                        results.add(`${hostPart}:${urlSpecifiedPort}${remark}`);
-                    } else {
-                        // 如果没有端口，遍历扩展所有 HTTPS 端口
-                        httpsPorts.forEach(port => {
-                            results.add(`${hostPart}:${port}${remark}`);
-                        });
-                    }
+                    const port = new URL(url).searchParams.get('port') || 默认端口;
+                    results.add(hasPort ? line : `${hostPart}:${port}${remark}`);
                 });
             } else {
                 const headers = lines[0].split(',').map(h => h.trim());
@@ -1467,19 +1389,11 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 1500) 
                     const ipIdx = headers.findIndex(h => h.includes('IP'));
                     const delayIdx = headers.findIndex(h => h.includes('延迟'));
                     const speedIdx = headers.findIndex(h => h.includes('下载速度'));
-                    
+                    const port = new URL(url).searchParams.get('port') || 默认端口;
                     dataLines.forEach(line => {
                         const cols = line.split(',').map(c => c.trim());
                         const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-                        
-                        if (urlSpecifiedPort) {
-                            results.add(`${wrappedIP}:${urlSpecifiedPort}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
-                        } else {
-                            // 遍历扩展所有 HTTPS 端口
-                            httpsPorts.forEach(port => {
-                                results.add(`${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
-                            });
-                        }
+                        results.add(`${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`);
                     });
                 }
             }
@@ -1517,32 +1431,32 @@ async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
 //////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
 async function nginx() {
     return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <title>Welcome to nginx!</title>
-    <style>
-        body {
-            width: 35em;
-            margin: 0 auto;
-            font-family: Tahoma, Verdana, Arial, sans-serif;
-        }
-    </style>
-    </head>
-    <body>
-    <h1>Welcome to nginx!</h1>
-    <p>If you see this page, the nginx web server is successfully installed and
-    working. Further configuration is required.</p>
-    
-    <p>For online documentation and support please refer to
-    <a href="http://nginx.org/">nginx.org</a>.<br/>
-    Commercial support is available at
-    <a href="http://nginx.com/">nginx.com</a>.</p>
-    
-    <p><em>Thank you for using nginx.</em></p>
-    </body>
-    </html>
-    `
+	<!DOCTYPE html>
+	<html>
+	<head>
+	<title>Welcome to nginx!</title>
+	<style>
+		body {
+			width: 35em;
+			margin: 0 auto;
+			font-family: Tahoma, Verdana, Arial, sans-serif;
+		}
+	</style>
+	</head>
+	<body>
+	<h1>Welcome to nginx!</h1>
+	<p>If you see this page, the nginx web server is successfully installed and
+	working. Further configuration is required.</p>
+	
+	<p>For online documentation and support please refer to
+	<a href="http://nginx.org/">nginx.org</a>.<br/>
+	Commercial support is available at
+	<a href="http://nginx.com/">nginx.com</a>.</p>
+	
+	<p><em>Thank you for using nginx.</em></p>
+	</body>
+	</html>
+	`
 }
 
 async function html1101(host, 访问IP) {
@@ -1588,12 +1502,12 @@ async function html1101(host, 访问IP) {
                         <h2 data-translate="what_happened">What happened?</h2>
                             <p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
                     </div>
-                    
+                   
                     <div class="cf-column">
                         <h2 data-translate="what_can_i_do">What can I do?</h2>
                             <p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
                     </div>
-                    
+                   
                 </div>
             </div><div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
     <p class="text-13">
@@ -1617,3 +1531,4 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
