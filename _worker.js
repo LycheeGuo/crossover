@@ -5,8 +5,9 @@ const Pages静态页面 = 'https://edt-pages.github.io';
 const SOCKS5_WHITELIST_DEFAULT = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 
 // [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
+// 当检测到访问 scholar.google.com 时，将强制使用这些代理
 const GOOGLE_SCHOLAR_PROXIES = [
-    'http://59.127.212.110:4431'
+    'http://59.127.212.110:4431' // 你可以在这里添加更多专门用于学术的代理
 ];
 
 // [变量] 模块级变量 (仅用于缓存配置)
@@ -258,6 +259,7 @@ export default {
                         const 需要的IP数量 = config_JSON.优选订阅生成.本地IP库.随机数量 || 25;
                         
                         // 使用 [优化] 后的生成随机IP函数，支持 KV 缓存 + CDN
+                        // [修改] 移除数量限制：这里虽然保留了变量，但在 slice 时我们会注释掉限制
                         const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, env, ctx, 需要的IP数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
                         
                         const 优选API = [], 优选IP = [], 其他节点 = [];
@@ -271,8 +273,13 @@ export default {
                             const 优选API的IP = await 请求优选API(优选API, '443', 1500);
                             let 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
                             
-                            if(完整优选IP.length > 需要的IP数量) 完整优选IP = 完整优选IP.slice(0, 需要的IP数量);
+                            // [修改] 移除切片限制，输出所有节点
+                            // if(完整优选IP.length > 需要的IP数量) 完整优选IP = 完整优选IP.slice(0, 需要的IP数量);
                             
+                            // [修改] 智能命名逻辑：基于原备注或 IP 属地进行命名
+                            // 维护一个计数器，用于记录每个国家的节点序号
+                            const regionCounters = {};
+
                             订阅内容 = 完整优选IP.map((原始地址, index) => {
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
                                 const match = 原始地址.match(regex);
@@ -282,26 +289,33 @@ export default {
                                 if (match) {
                                     节点地址 = match[1];  
                                     节点端口 = match[2] || "443";  
+                                    const originalRemark = match[3] || '';
                                     
-                                    // [优化] 地区列表
-                                    let regionMap = [
-                                        'HK', 'US', 'SG', 'JP', 'KR', 'TW', 'UK', 'DE', 'FR', 'CA',
-                                        'AU', 'BR', 'IN', 'NL', 'TR', 'IT', 'RU', 'VN', 'TH', 'ID',
-                                        'MY', 'PH', 'ES', 'PT', 'SE', 'NO', 'DK', 'FI', 'PL', 'CZ',
-                                        'CH', 'AT', 'BE', 'IE', 'NZ', 'MX', 'AR', 'CL', 'ZA', 'EG'
-                                    ];
-                                    
-                                    // [优化] 地区优先感知
-                                    const userCountry = request.cf.country;
-                                    if (userCountry && regionMap.includes(userCountry)) {
-                                        // 将用户所在地区移到列表第一位
-                                        regionMap = [userCountry, ...regionMap.filter(r => r !== userCountry)];
-                                    }
+                                    // [修改] 智能识别地区代码
+                                    let cc = 'Node'; // 默认
+                                    const upperRemark = originalRemark.toUpperCase();
 
-                                    const regionIndex = Math.floor(index / 5) % regionMap.length; 
-                                    const regionName = regionMap[regionIndex]; 
-                                    const number = (index % 5) + 1;
-                                    节点备注 = `${regionName} ${String(number).padStart(2, '0')}`;
+                                    // 简单的关键字匹配逻辑，可根据需要扩展
+                                    if (/HK|HONG|Hong|HongKong/i.test(originalRemark)) cc = 'HK';
+                                    else if (/TW|TAIWAN|Taipei/i.test(originalRemark)) cc = 'TW';
+                                    else if (/JP|JAPAN|Tokyo|Osaka/i.test(originalRemark)) cc = 'JP';
+                                    else if (/SG|SINGAPORE/i.test(originalRemark)) cc = 'SG';
+                                    else if (/US|AMERICA|United States/i.test(originalRemark)) cc = 'US';
+                                    else if (/KR|KOREA|Seoul/i.test(originalRemark)) cc = 'KR';
+                                    else if (/DE|GERMANY/i.test(originalRemark)) cc = 'DE';
+                                    else if (/UK|UNITED KINGDOM|London/i.test(originalRemark)) cc = 'UK';
+                                    else if (/FR|FRANCE/i.test(originalRemark)) cc = 'FR';
+                                    else if (/CN|CHINA|CMCC|CU|CT/i.test(originalRemark)) cc = 'CN'; // 包含运营商缩写
+
+                                    // 初始化计数器
+                                    if (!regionCounters[cc]) regionCounters[cc] = 1;
+                                    
+                                    // 生成格式化序号，例如 01, 02
+                                    const indexStr = String(regionCounters[cc]++).padStart(2, '0');
+                                    
+                                    // 最终命名格式：地区代码 + 序号 (去符号)
+                                    节点备注 = `${cc} ${indexStr}`;
+
                                 } else {
                                     return null;
                                 }
@@ -1617,4 +1631,3 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
-
