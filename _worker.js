@@ -1,15 +1,26 @@
 import { connect } from "cloudflare:sockets";
 
-// [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
+// ==============================================================================
+// [新增] 谷歌学术专用代理池 (硬编码，负载均衡) - 来自第二段代码
+// ==============================================================================
 const GOOGLE_SCHOLAR_PROXIES = [
-    'http://59.127.212.110:4431'
+    'http://208.180.238.40:3390',
+    'http://59.127.212.110:4431',
+    'http://82.66.253.131:9080',
+    'http://46.30.160.47:7070',
+    'http://102.134.49.165:6005',
+    'http://102.134.48.240:6005',
+    'http://118.163.198.107:1168',
+    'http://211.75.210.107:1168'
 ];
+// ==============================================================================
 
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 
+///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
@@ -372,6 +383,7 @@ export default {
     }
 };
 
+///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
 async function 处理WS请求(request, yourUUID) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
@@ -525,54 +537,34 @@ function 解析魏烈思请求(chunk, token) {
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
     console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
 
-    if (host.toLowerCase().includes('scholar.google') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
-        console.log(`[Google Scholar] 检测到谷歌学术访问: ${host}，正在使用专用代理...`);
-        try {
-            const proxyUrlStr = GOOGLE_SCHOLAR_PROXIES[Math.floor(Math.random() * GOOGLE_SCHOLAR_PROXIES.length)];
-            const proxyUrl = new URL(proxyUrlStr);
-            const proxyHost = proxyUrl.hostname;
-            const proxyPort = parseInt(proxyUrl.port) || 80;
-            const proxySocket = connect({ hostname: proxyHost, port: proxyPort });
-            remoteConnWrapper.socket = proxySocket; 
-
-            const writer = proxySocket.writable.getWriter();
-            const reader = proxySocket.readable.getReader();
-            const connectReq = `CONNECT ${host}:${portNum} HTTP/1.1\r\nHost: ${host}:${portNum}\r\nUser-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
-            await writer.write(new TextEncoder().encode(connectReq));
-
-            let responseBuffer = new Uint8Array(0);
-            let headerEndIndex = -1;
-            let bytesRead = 0;
-
-            while (headerEndIndex === -1 && bytesRead < 8192) {
-                const { done, value } = await reader.read();
-                if (done) throw new Error('专用代理连接过早关闭');
-                responseBuffer = new Uint8Array([...responseBuffer, ...value]);
-                bytesRead = responseBuffer.length;
-                const crlfcrlf = responseBuffer.findIndex((_, i) => 
-                    i < responseBuffer.length - 3 && 
-                    responseBuffer[i] === 0x0d && responseBuffer[i + 1] === 0x0a && 
-                    responseBuffer[i + 2] === 0x0d && responseBuffer[i + 3] === 0x0a
-                );
-                if (crlfcrlf !== -1) headerEndIndex = crlfcrlf + 4;
+    // ================== 新增：谷歌学术专用分流逻辑 START ==================
+    // 当检测到 scholar.google.com 时，使用专用代理池，并带有重试机制
+    if (host.toLowerCase().includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0) {
+        // [重试机制] 尝试最多3次，每次随机选择不同的代理
+        const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
+        const triedProxies = new Set();
+        
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                // 从未尝试过的代理中随机选择一个
+                const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(proxy => !triedProxies.has(proxy));
+                if (availableProxies.length === 0) break; // 所有代理都已尝试
+                
+                const randomAIP = availableProxies[Math.floor(Math.random() * availableProxies.length)];
+                triedProxies.add(randomAIP);
+                
+                console.log(`[Google Scholar] 尝试连接专用代理: ${randomAIP} (尝试 ${attempt + 1}/${maxRetries})`);
+                await connectToScholarProxy(host, portNum, rawData, ws, respHeader, remoteConnWrapper, randomAIP);
+                return; // 成功连接，立即返回
+            } catch (e) {
+                console.error(`[Google Scholar] 代理连接失败: ${e.message}`);
+                // 继续下一次重试
             }
-
-            const headerStr = new TextDecoder().decode(responseBuffer.slice(0, headerEndIndex));
-            if (!headerStr.includes(' 200 ')) {
-                 throw new Error(`专用代理握手失败: ${headerStr.split('\r\n')[0]}`);
-            }
-
-            await writer.write(rawData);
-            writer.releaseLock();
-            reader.releaseLock();
-            console.log(`[Google Scholar] 专用代理连接建立成功`);
-            await connectStreams(proxySocket, ws, respHeader, null);
-            return; 
-
-        } catch (err) {
-            console.error(`[Google Scholar] 专用代理连接失败: ${err.message}，尝试回退到默认逻辑`);
         }
+        // 所有Scholar代理都失败后，记录日志并继续执行下方的常规TCP连接逻辑
+        console.error('[Google Scholar] 所有专用代理连接失败，回退到默认路由');
     }
+    // ================== 新增：谷歌学术专用分流逻辑 END ==================
 
     async function connectDirect(address, port, data, 所有反代数组 = null, 反代兜底 = true) {
         let remoteSock;
@@ -651,6 +643,38 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         }
     }
 }
+
+// ==============================================================================
+// [新增] 谷歌学术专用代理连接函数 (适配 Code 1 的辅助函数)
+// ==============================================================================
+async function connectToScholarProxy(targetHost, targetPort, initialData, ws, respHeader, remoteConnWrapper, proxyAddressString) {
+    let proxyProtocol = 'http'; // 默认 HTTP
+    let addressStr = proxyAddressString;
+
+    if (addressStr.startsWith('socks5://')) {
+        proxyProtocol = 'socks5';
+        addressStr = addressStr.slice(9);
+    } else if (addressStr.startsWith('http://')) {
+        addressStr = addressStr.slice(7);
+    } else if (addressStr.startsWith('https://')) {
+        addressStr = addressStr.slice(8);
+    }
+
+    // 解析代理配置
+    const proxyConfig = await 获取SOCKS5账号(addressStr); 
+    
+    let newSocket;
+    if (proxyProtocol === 'socks5') {
+        newSocket = await socks5Connect(targetHost, targetPort, initialData, proxyConfig);
+    } else {
+        newSocket = await httpConnect(targetHost, targetPort, initialData, proxyConfig);
+    }
+
+    remoteConnWrapper.socket = newSocket;
+    newSocket.closed.catch(() => {}).finally(() => closeSocketQuietly(ws));
+    connectStreams(newSocket, ws, respHeader, null);
+}
+// ==============================================================================
 
 async function forwardataudp(udpChunk, webSocket, respHeader) {
     try {
@@ -770,9 +794,10 @@ function base64ToArray(b64Str) {
         return { error };
     }
 }
-
-async function socks5Connect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+///////////////////////////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
+// [修改] 支持传入特定配置 (specificConfig)，以兼容 scholar 分流逻辑，未传入则使用全局 parsedSocks5Address
+async function socks5Connect(targetHost, targetPort, initialData, specificConfig = null) {
+    const { username, password, hostname, port } = specificConfig || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -807,8 +832,9 @@ async function socks5Connect(targetHost, targetPort, initialData) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+// [修改] 支持传入特定配置 (specificConfig)，以兼容 scholar 分流逻辑，未传入则使用全局 parsedSocks5Address
+async function httpConnect(targetHost, targetPort, initialData, specificConfig = null) {
+    const { username, password, hostname, port } = specificConfig || parsedSocks5Address;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
@@ -839,7 +865,7 @@ async function httpConnect(targetHost, targetPort, initialData) {
         throw error;
     }
 }
-
+//////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
 function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null, ECH启用 = false, HOSTS = [], ECH_SNI = null, ECH_DNS) {
     let clash_yaml = Clash_原始订阅内容.replace(/mode:\s*Rule\b/g, 'mode: rule');
 
@@ -2046,7 +2072,7 @@ async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
         }
     } catch (error) { return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime }; }
 }
-
+//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
 async function nginx() {
     return `
 	<!DOCTYPE html>
