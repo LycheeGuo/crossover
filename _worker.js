@@ -285,7 +285,7 @@ export default {
                                     
                                     // [优化] 地区列表
                                     let regionMap = [
-                                        'HK', 'US', 'SG', 'JP', 'KR', 'TW', 'UK', 'DE', 'FR', 'CA',
+                                        'JP', 'SG', 'KR', 'TW', 'UK','HK', 'US', 'DE', 'FR', 'CA',
                                         'AU', 'BR', 'IN', 'NL', 'TR', 'IT', 'RU', 'VN', 'TH', 'ID',
                                         'MY', 'PH', 'ES', 'PT', 'SE', 'NO', 'DK', 'FI', 'PL', 'CZ',
                                         'CH', 'AT', 'BE', 'IE', 'NZ', 'MX', 'AR', 'CL', 'ZA', 'EG'
@@ -1617,5 +1617,6 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
+
 
 
