@@ -1,11 +1,24 @@
-﻿/*In our project workflow, we first*/ import //the necessary modules, 
+/*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
     'cloudflare\u003asockets';
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true;
-let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
+let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com']; // 移除 scholar.google.com 避免冲突
 const Pages静态页面 = 'https://edt-pages.github.io';
+
+// [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
+const GOOGLE_SCHOLAR_PROXIES = [
+    'http://208.180.238.40:3390',
+    'http://59.127.212.110:4431',
+    'http://82.66.253.131:9080',
+    'http://46.30.160.47:7070',
+    'http://102.134.49.165:6005',
+    'http://102.134.48.240:6005',
+    'http://118.163.198.107:1168',
+    'http://211.75.210.107:1168'
+];
+
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
 export default {
     async fetch(request, env, ctx) {
@@ -1096,6 +1109,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
     console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
     const 连接超时毫秒 = 1000;
     let 已通过代理发送首包 = false;
+    const isScholar = host.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0;
 
     async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
         await Promise.race([
@@ -1145,6 +1159,59 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         }
     }
 
+    async function connectToScholar(允许发送首包 = true) {
+        if (remoteConnWrapper.connectingPromise) {
+            await remoteConnWrapper.connectingPromise;
+            return;
+        }
+
+        const 本次发送首包 = 允许发送首包 && !已通过代理发送首包 && 有效数据长度(rawData) > 0;
+        const 本次首包数据 = 本次发送首包 ? rawData : null;
+
+        const 当前连接任务 = (async () => {
+            const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
+            const triedProxies = new Set();
+            let newSocket = null;
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(p => !triedProxies.has(p));
+                if (availableProxies.length === 0) break;
+                const randomProxy = availableProxies[Math.floor(Math.random() * availableProxies.length)];
+                triedProxies.add(randomProxy);
+
+                try {
+                    console.log(`[Scholar代理] 尝试连接到: ${randomProxy}`);
+                    const proxyAddressStr = randomProxy.replace(/^https?:\/\//i, '');
+                    const proxyConfig = await 获取SOCKS5账号(proxyAddressStr);
+                    // 仅使用 HTTP 代理连接谷歌学术池
+                    newSocket = await httpConnect(host, portNum, 本次首包数据, proxyConfig);
+                    break;
+                } catch (err) {
+                    console.log(`[Scholar代理] 连接失败: ${randomProxy}, 错误: ${err.message}`);
+                }
+            }
+
+            if (!newSocket) {
+                closeSocketQuietly(ws);
+                throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+            }
+
+            if (本次发送首包) 已通过代理发送首包 = true;
+            remoteConnWrapper.socket = newSocket;
+            newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
+            connectStreams(newSocket, ws, respHeader, null);
+        })();
+
+        remoteConnWrapper.connectingPromise = 当前连接任务;
+        try {
+            await 当前连接任务;
+        } finally {
+            if (remoteConnWrapper.connectingPromise === 当前连接任务) {
+                remoteConnWrapper.connectingPromise = null;
+            }
+        }
+    }
+
     async function connecttoPry(允许发送首包 = true) {
         if (remoteConnWrapper.connectingPromise) {
             await remoteConnWrapper.connectingPromise;
@@ -1182,10 +1249,27 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             }
         }
     }
-    remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
+
+    remoteConnWrapper.retryConnect = async () => {
+        if (isScholar) {
+            await connectToScholar(!已通过代理发送首包);
+        } else {
+            await connecttoPry(!已通过代理发送首包);
+        }
+    };
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
-    if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
+    
+    // 如果是 Google Scholar 且配置了代理池，则强制走专属代理池，且不支持兜底直连
+    if (isScholar) {
+        console.log(`[TCP转发] 命中 Google Scholar，使用专属 HTTP 代理池`);
+        try {
+            await connectToScholar();
+        } catch (err) {
+            console.log(`[TCP转发] Scholar 代理连接失败: ${err.message}`);
+            throw err;
+        }
+    } else if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
         console.log(`[TCP转发] 启用 SOCKS5/HTTP 全局代理`);
         try {
             await connecttoPry();
@@ -1328,8 +1412,8 @@ function base64ToArray(b64Str) {
     }
 }
 ///////////////////////////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+async function socks5Connect(targetHost, targetPort, initialData, proxyConfig = parsedSocks5Address) {
+    const { username, password, hostname, port } = proxyConfig;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -1364,8 +1448,8 @@ async function socks5Connect(targetHost, targetPort, initialData) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData) {
-    const { username, password, hostname, port } = parsedSocks5Address;
+async function httpConnect(targetHost, targetPort, initialData, proxyConfig = parsedSocks5Address) {
+    const { username, password, hostname, port } = proxyConfig;
     const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
     try {
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
@@ -2896,12 +2980,13 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 
 async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
     const startTime = Date.now();
-    try { parsedSocks5Address = await 获取SOCKS5账号(代理参数); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
-    const { username, password, hostname, port } = parsedSocks5Address;
+    let parsedSocks5AddressConfig;
+    try { parsedSocks5AddressConfig = await 获取SOCKS5账号(代理参数); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
+    const { username, password, hostname, port } = parsedSocks5AddressConfig;
     const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
     try {
         const initialData = new Uint8Array(0);
-        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData) : await httpConnect('check.socks5.090227.xyz', 80, initialData);
+        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData, parsedSocks5AddressConfig) : await httpConnect('check.socks5.090227.xyz', 80, initialData, parsedSocks5AddressConfig);
         if (!tcpSocket) return { success: false, error: '无法连接到代理服务器', proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
         try {
             const writer = tcpSocket.writable.getWriter(), encoder = new TextEncoder();
@@ -2955,11 +3040,7 @@ async function html1101(host, 访问IP) {
     const 随机字符串 = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('');
 
     return `<!DOCTYPE html>
-<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 7]>    <html class="no-js ie7 oldie" lang="en-US"> <![endif]-->
-<!--[if IE 8]>    <html class="no-js ie8 oldie" lang="en-US"> <![endif]-->
-<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->
-<head>
+<html class="no-js" lang="en-US"> <head>
 <title>Worker threw exception | ${host} | Cloudflare</title>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
@@ -2967,11 +3048,9 @@ async function html1101(host, 访问IP) {
 <meta name="robots" content="noindex, nofollow" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="stylesheet" id="cf_styles-css" href="/cdn-cgi/styles/cf.errors.css" />
-<!--[if lt IE 9]><link rel="stylesheet" id='cf_styles-ie-css' href="/cdn-cgi/styles/cf.errors.ie.css" /><![endif]-->
 <style>body{margin:0;padding:0}</style>
 
 
-<!--[if gte IE 10]><!-->
 <script>
   if (!navigator.cookieEnabled) {
     window.addEventListener('DOMContentLoaded', function () {
@@ -2980,8 +3059,6 @@ async function html1101(host, 访问IP) {
     })
   }
 </script>
-<!--<![endif]-->
-
 </head>
 <body>
     <div id="cf-wrapper">
@@ -2994,11 +3071,7 @@ async function html1101(host, 访问IP) {
                     <small class="heading-ray-id">Ray ID: ${随机字符串} &bull; ${格式化时间戳} UTC</small>
                 </h1>
                 <h2 class="cf-subheadline" data-translate="error_desc">Worker threw exception</h2>
-            </div><!-- /.header -->
-    
-            <section></section><!-- spacer -->
-    
-            <div class="cf-section cf-wrapper">
+            </div><section></section><div class="cf-section cf-wrapper">
                 <div class="cf-columns two">
                     <div class="cf-column">
                         <h2 data-translate="what_happened">What happened?</h2>
@@ -3011,9 +3084,7 @@ async function html1101(host, 访问IP) {
                     </div>
                     
                 </div>
-            </div><!-- /.section -->
-    
-            <div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
+            </div><div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
     <p class="text-13">
       <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold"> ${随机字符串}</strong></span>
       <span class="cf-footer-separator sm:hidden">&bull;</span>
@@ -3027,12 +3098,7 @@ async function html1101(host, 访问IP) {
       
     </p>
     <script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>
-  </div><!-- /.error-footer -->
-
-        </div><!-- /#cf-error-details -->
-    </div><!-- /#cf-wrapper -->
-
-     <script>
+  </div></div></div><script>
     window._cf_translation = {};
     
     
