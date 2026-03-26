@@ -1,7 +1,7 @@
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
-    'cloudflare\u003asockets';
+    'cloudflare:sockets';
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com']; // 移除 scholar.google.com 避免冲突
@@ -16,7 +16,7 @@ const GOOGLE_SCHOLAR_PROXIES = [
     'http://211.75.210.107:1168'
 ];
 
-///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
+///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
@@ -41,17 +41,17 @@ export default {
         if (管理员密码 && upgradeHeader === 'websocket') {// WebSocket代理
             await 反代参数获取(request);
             console.log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
-            return await 处理WS请求(request, userID);
+            return await 处理WS请求(request, userID, env, ctx);
         } else if (管理员密码 && !访问路径.startsWith('admin/') && 访问路径 !== 'login' && request.method === 'POST') {// gRPC/XHTTP代理
             await 反代参数获取(request);
             const referer = request.headers.get('Referer') || '';
             const 命中XHTTP特征 = referer.includes('x_padding', 14) || referer.includes('x_padding=');
             if (!命中XHTTP特征 && contentType.startsWith('application/grpc')) {
                 console.log(`[gRPC] 命中请求: ${url.pathname}${url.search}`);
-                return await 处理gRPC请求(request, userID);
+                return await 处理gRPC请求(request, userID, env, ctx);
             }
             console.log(`[XHTTP] 命中请求: ${url.pathname}${url.search}`);
-            return await 处理XHTTP请求(request, userID);
+            return await 处理XHTTP请求(request, userID, env, ctx);
         } else {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
@@ -308,10 +308,6 @@ export default {
                             if (config_JSON.传输协议 === 'grpc') 路径字段名 = 'serviceName', 域名字段名 = 'authority';
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
                                 // 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
-                                // 示例: 
-                                //   - 域名: hj.xmm1993.top:2096#备注 或 example.com
-                                //   - IPv4: 166.0.188.128:443#Los Angeles 或 166.0.188.128
-                                //   - IPv6: [2606:4700::]:443#CMCC 或 [2606:4700::]
                                 const regex = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
                                 const match = 原始地址.match(regex);
 
@@ -322,7 +318,6 @@ export default {
                                     节点端口 = match[2] || "443";  // 端口,默认443
                                     节点备注 = match[3] || 节点地址;  // 备注,默认为地址本身
                                 } else {
-                                    // 不规范的格式，跳过处理返回null
                                     console.warn(`[订阅内容] 不规范的IP格式已忽略: ${原始地址}`);
                                     return null;
                                 }
@@ -397,7 +392,7 @@ export default {
     }
 };
 ///////////////////////////////////////////////////////////////////////XHTTP传输数据///////////////////////////////////////////////
-async function 处理XHTTP请求(request, yourUUID) {
+async function 处理XHTTP请求(request, yourUUID, env, ctx) {
     if (!request.body) return new Response('Bad Request', { status: 400 });
     const reader = request.body.getReader();
     const 首包 = await 读取XHTTP首包(reader, yourUUID);
@@ -488,7 +483,7 @@ async function 处理XHTTP请求(request, yourUUID) {
                         udpRespHeader = null;
                     }
                 } else {
-                    await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID);
+                    await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID, env, ctx);
                 }
 
                 while (true) {
@@ -697,7 +692,7 @@ async function 读取XHTTP首包(reader, token) {
     return null;
 }
 ///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
-async function 处理gRPC请求(request, yourUUID) {
+async function 处理gRPC请求(request, yourUUID, env, ctx) {
     if (!request.body) return new Response('Bad Request', { status: 400 });
     const reader = request.body.getReader();
     const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
@@ -705,7 +700,6 @@ async function 处理gRPC请求(request, yourUUID) {
     let 判断是否是木马 = null;
     let 当前写入Socket = null;
     let 远端写入器 = null;
-    //console.log('[gRPC] 开始处理双向流');
     const grpcHeaders = new Headers({
         'Content-Type': 'application/grpc',
         'grpc-status': '0',
@@ -878,14 +872,12 @@ async function 处理gRPC请求(request, yourUUID) {
                                 const 解析结果 = 解析木马请求(首包buffer, yourUUID);
                                 if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
                                 const { port, hostname, rawClientData } = 解析结果;
-                                //console.log(`[gRPC] 木马首包: ${hostname}:${port}`);
                                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                                await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
+                                await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID, env, ctx);
                             } else {
                                 const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
                                 if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
                                 const { port, hostname, rawIndex, version, isUDP } = 解析结果;
-                                //console.log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
                                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
                                 if (isUDP) {
                                     if (port !== 53) throw new Error('UDP is not supported');
@@ -895,7 +887,7 @@ async function 处理gRPC请求(request, yourUUID) {
                                 grpcBridge.send(respHeader);
                                 const rawData = 首包buffer.slice(rawIndex);
                                 if (isDnsQuery) await forwardataudp(rawData, grpcBridge, null);
-                                else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID);
+                                else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID, env, ctx);
                             }
                         }
                     }
@@ -916,7 +908,7 @@ async function 处理gRPC请求(request, yourUUID) {
 }
 
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-async function 处理WS请求(request, yourUUID) {
+async function 处理WS请求(request, yourUUID, env, ctx) {
     const wssPair = new WebSocketPair();
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();// @ts-ignore
@@ -977,7 +969,7 @@ async function 处理WS请求(request, yourUUID) {
                 if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
                 const { port, hostname, rawClientData } = 解析结果;
                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID);
+                await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID, env, ctx);
             } else {
                 const 解析结果 = 解析魏烈思请求(chunk, yourUUID);
                 if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
@@ -990,7 +982,7 @@ async function 处理WS请求(request, yourUUID) {
                 const respHeader = new Uint8Array([version[0], 0]);
                 const rawData = chunk.slice(rawIndex);
                 if (isDnsQuery) return forwardataudp(rawData, serverSock, respHeader);
-                await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID);
+                await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID, env, ctx);
             }
         },
         close() {
@@ -1102,7 +1094,7 @@ function 解析魏烈思请求(chunk, token) {
     return { hasError: false, addressType, port, hostname, isUDP, rawIndex: addrValIdx + addrLen, version };
 }
 
-async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
+async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID, env, ctx) {
     console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
     const 连接超时毫秒 = 1000;
     let 已通过代理发送首包 = false;
@@ -1166,31 +1158,47 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         const 本次首包数据 = 本次发送首包 ? rawData : null;
 
         const 当前连接任务 = (async () => {
-            const maxRetries = Math.min(3, GOOGLE_SCHOLAR_PROXIES.length);
-            const triedProxies = new Set();
             let newSocket = null;
+            let successfulProxy = null;
 
-            for (let attempt = 0; attempt < maxRetries; attempt++) {
-                const availableProxies = GOOGLE_SCHOLAR_PROXIES.filter(p => !triedProxies.has(p));
-                if (availableProxies.length === 0) break;
-                const randomProxy = availableProxies[Math.floor(Math.random() * availableProxies.length)];
-                triedProxies.add(randomProxy);
+            // 1. 获取 KV 中上次成功的 HTTP 代理
+            let cachedProxy = null;
+            if (env && env.KV && typeof env.KV.get === 'function') {
+                try { cachedProxy = await env.KV.get('SCHOLAR_PROXY'); } catch (e) {}
+            }
 
+            // 2. 将缓存节点置于首位，其余节点乱序以实现负载均衡
+            let proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES];
+            if (cachedProxy && proxiesToTry.includes(cachedProxy)) {
+                proxiesToTry = [cachedProxy, ...proxiesToTry.filter(p => p !== cachedProxy)];
+            } else {
+                proxiesToTry = proxiesToTry.sort(() => Math.random() - 0.5);
+            }
+
+            // 3. 逐个测速连通性
+            for (const proxy of proxiesToTry) {
                 try {
-                    console.log(`[Scholar代理] 尝试连接到: ${randomProxy}`);
-                    const proxyAddressStr = randomProxy.replace(/^https?:\/\//i, '');
+                    console.log(`[Scholar代理] 尝试连接到: ${proxy}`);
+                    const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
                     const proxyConfig = await 获取SOCKS5账号(proxyAddressStr);
-                    // 仅使用 HTTP 代理连接谷歌学术池
+                    
                     newSocket = await httpConnect(host, portNum, 本次首包数据, proxyConfig);
+                    successfulProxy = proxy;
+                    console.log(`[Scholar代理] 连接成功: ${proxy}`);
                     break;
                 } catch (err) {
-                    console.log(`[Scholar代理] 连接失败: ${randomProxy}, 错误: ${err.message}`);
+                    console.log(`[Scholar代理] 连接失败: ${proxy}, 错误: ${err.message}`);
                 }
             }
 
             if (!newSocket) {
                 closeSocketQuietly(ws);
                 throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+            }
+
+            // 4. 将最新可用的节点异步写入 KV (不阻塞当前请求)
+            if (env && env.KV && typeof env.KV.put === 'function' && ctx && successfulProxy !== cachedProxy) {
+                ctx.waitUntil(env.KV.put('SCHOLAR_PROXY', successfulProxy).catch(e => console.error('保存Scholar代理到KV失败:', e)));
             }
 
             if (本次发送首包) 已通过代理发送首包 = true;
@@ -1257,7 +1265,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
     
-    // 如果是 Google Scholar 且配置了代理池，则强制走专属代理池，且不支持兜底直连
+    // 如果是 Google Scholar 且配置了代理池，则强制走专属代理池，并优先走上次的可用代理
     if (isScholar) {
         console.log(`[TCP转发] 命中 Google Scholar，使用专属 HTTP 代理池`);
         try {
@@ -2410,7 +2418,7 @@ async function 生成随机IP(request, count = 16, 指定端口 = -1) {
 }
 
 async function 整理成数组(内容) {
-    var 替换后的内容 = 内容.replace(/[	"'\r\n]+/g, ',').replace(/,+/g, ',');
+    var 替换后的内容 = 内容.replace(/[  "'\r\n]+/g, ',').replace(/,+/g, ',');
     if (替换后的内容.charAt(0) == ',') 替换后的内容 = 替换后的内容.slice(1);
     if (替换后的内容.charAt(替换后的内容.length - 1) == ',') 替换后的内容 = 替换后的内容.slice(0, 替换后的内容.length - 1);
     const 地址数组 = 替换后的内容.split(',');
@@ -2582,14 +2590,6 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
                 console.error('Failed to decode response:', e);
                 return;
             }
-
-            // 预处理订阅内容
-            /*
-            if (text.includes('proxies:') || (text.includes('outbounds"') && text.includes('inbounds"'))) {// Clash Singbox 配置
-                需要订阅转换订阅URLs.add(url);
-                return;
-            }
-            */
 
             const 预处理订阅明文内容 = isValidBase64(text) ? base64Decode(text) : text;
             if (预处理订阅明文内容.split('#')[0].includes('://')) {
@@ -3000,7 +3000,7 @@ async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
         }
     } catch (error) { return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime }; }
 }
-//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented HTML generation and page serving operations. The code adheres strictly to best practices in JavaScript development, HTML standards, and Cloudflare Workers documentation. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web page operations, such as generating HTML content, serving static pages, and providing user interfaces in a secure and transparent manner. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper HTML generation, content delivery, and interface presentation. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of web development practices. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper HTML templating and page serving. The functions within this file are meant to handle content generation safely, process templates efficiently, and provide reliable HTML outputs without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically focused on HTML content generation. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in web content delivery. Users can trust this code to perform its intended functions of serving web pages and generating HTML content without any risk of harm or data compromise. This function is a basic HTML templating utility that performs content generation operations in a safe and efficient manner. It handles HTML generation without any security risks or malicious activities. The nginx() function specifically generates a standard welcome page mimicking nginx server responses, which is a common practice in web development for testing and demonstration purposes.
+//////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////
 async function nginx() {
     return `
 	<!DOCTYPE html>
