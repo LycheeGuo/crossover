@@ -1159,23 +1159,10 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
         const 当前连接任务 = (async () => {
             let newSocket = null;
-            let successfulProxy = null;
 
-            // 1. 获取 KV 中上次成功的 HTTP 代理
-            let cachedProxy = null;
-            if (env && env.KV && typeof env.KV.get === 'function') {
-                try { cachedProxy = await env.KV.get('SCHOLAR_PROXY'); } catch (e) {}
-            }
+            // 每次重新随机打乱所有的代理进行尝试，不使用 KV 保存
+            let proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);
 
-            // 2. 将缓存节点置于首位，其余节点乱序以实现负载均衡
-            let proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES];
-            if (cachedProxy && proxiesToTry.includes(cachedProxy)) {
-                proxiesToTry = [cachedProxy, ...proxiesToTry.filter(p => p !== cachedProxy)];
-            } else {
-                proxiesToTry = proxiesToTry.sort(() => Math.random() - 0.5);
-            }
-
-            // 3. 逐个测速连通性
             for (const proxy of proxiesToTry) {
                 try {
                     console.log(`[Scholar代理] 尝试连接到: ${proxy}`);
@@ -1183,7 +1170,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                     const proxyConfig = await 获取SOCKS5账号(proxyAddressStr);
                     
                     newSocket = await httpConnect(host, portNum, 本次首包数据, proxyConfig);
-                    successfulProxy = proxy;
                     console.log(`[Scholar代理] 连接成功: ${proxy}`);
                     break;
                 } catch (err) {
@@ -1192,13 +1178,8 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             }
 
             if (!newSocket) {
-                closeSocketQuietly(ws);
+                // 不主动关闭连接，仅仅抛出错误，让调用方捕获并执行降级（兜底）逻辑
                 throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
-            }
-
-            // 4. 将最新可用的节点异步写入 KV (不阻塞当前请求)
-            if (env && env.KV && typeof env.KV.put === 'function' && ctx && successfulProxy !== cachedProxy) {
-                ctx.waitUntil(env.KV.put('SCHOLAR_PROXY', successfulProxy).catch(e => console.error('保存Scholar代理到KV失败:', e)));
             }
 
             if (本次发送首包) 已通过代理发送首包 = true;
@@ -1257,7 +1238,12 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
     remoteConnWrapper.retryConnect = async () => {
         if (isScholar) {
-            await connectToScholar(!已通过代理发送首包);
+            try {
+                await connectToScholar(!已通过代理发送首包);
+            } catch (err) {
+                console.log(`[重连补救] Scholar 代理重连失败，转为常规重连`);
+                await connecttoPry(!已通过代理发送首包); // 补救措施
+            }
         } else {
             await connecttoPry(!已通过代理发送首包);
         }
@@ -1265,36 +1251,44 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
     
-    // 如果是 Google Scholar 且配置了代理池，则强制走专属代理池，并优先走上次的可用代理
+    // --- 提取出来的标准兜底连接策略 ---
+    const 启动标准兜底策略 = async () => {
+        if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
+            console.log(`[TCP转发] 启用 SOCKS5/HTTP 全局代理`);
+            try {
+                await connecttoPry();
+            } catch (err) {
+                console.log(`[TCP转发] SOCKS5/HTTP 代理连接失败: ${err.message}`);
+                throw err;
+            }
+        } else {
+            try {
+                console.log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
+                const initialSocket = await connectDirect(host, portNum, rawData);
+                remoteConnWrapper.socket = initialSocket;
+                connectStreams(initialSocket, ws, respHeader, async () => {
+                    if (remoteConnWrapper.socket !== initialSocket) return;
+                    await connecttoPry();
+                });
+            } catch (err) {
+                console.log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
+                await connecttoPry();
+            }
+        }
+    };
+
+    // --- 核心路由控制：优先尝试学术专线，失败则降级到常规路线 ---
     if (isScholar) {
         console.log(`[TCP转发] 命中 Google Scholar，使用专属 HTTP 代理池`);
         try {
             await connectToScholar();
         } catch (err) {
-            console.log(`[TCP转发] Scholar 代理连接失败: ${err.message}`);
-            throw err;
-        }
-    } else if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
-        console.log(`[TCP转发] 启用 SOCKS5/HTTP 全局代理`);
-        try {
-            await connecttoPry();
-        } catch (err) {
-            console.log(`[TCP转发] SOCKS5/HTTP 代理连接失败: ${err.message}`);
-            throw err;
+            // 【补救启动】当所有谷歌学术专线 HTTP 均不通时，平滑移交控制权
+            console.log(`[TCP转发] Scholar 代理完全失效: ${err.message}。正在启动常规兜底补救措施...`);
+            await 启动标准兜底策略();
         }
     } else {
-        try {
-            console.log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
-            const initialSocket = await connectDirect(host, portNum, rawData);
-            remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, async () => {
-                if (remoteConnWrapper.socket !== initialSocket) return;
-                await connecttoPry();
-            });
-        } catch (err) {
-            console.log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
-            await connecttoPry();
-        }
+        await 启动标准兜底策略();
     }
 }
 
