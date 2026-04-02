@@ -9,9 +9,13 @@ const Pages静态页面 = 'https://edt-pages.github.io';
 
 // [配置] 谷歌学术专用代理池 (硬编码，负载均衡)
 const GOOGLE_SCHOLAR_PROXIES = [
-    'socks5://user:pass@1.2.3.4:1080',
-    // ...
+    'http://82.66.253.131:9080',
+    'http://46.30.160.47:7070',
+    'http://102.134.49.165:6005',
+    'http://118.163.198.107:1168',
+    'http://211.75.210.107:1168'
 ];
+
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////
 export default {
     async fetch(request, env, ctx) {
@@ -1165,7 +1169,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                     const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
                     const proxyConfig = await 获取SOCKS5账号(proxyAddressStr);
                     
-                    newSocket = await socks5Connect(host, portNum, 本次首包数据, proxyConfig);
+                    newSocket = await httpConnect(host, portNum, 本次首包数据, proxyConfig);
                     console.log(`[Scholar代理] 连接成功: ${proxy}`);
                     break;
                 } catch (err) {
