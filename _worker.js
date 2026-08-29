@@ -2338,7 +2338,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		const 当前连接任务 = (async () => {
 			let newSocket = null;
 			const proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES];
-			const scholarConnectTimeoutMs = 6000;
 
 			for (const proxy of proxiesToTry) {
 				const scholarConnectStartedAt = Date.now();
@@ -2347,37 +2346,14 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 					const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
 					const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
 					const scholarProxyIsHTTPS = /^https:\/\//i.test(proxy);
-					let scholarTimedOut = false;
-					let scholarTimeoutId = null;
-
-					const scholarConnectPromise = httpConnect(
+					newSocket = await httpConnect(
 						host,
 						portNum,
 						本次首包数据,
 						scholarProxyIsHTTPS,
 						TCP连接,
 						scholarProxyConfig
-					).then(socket => {
-						if (scholarTimedOut) {
-							try { socket.close(); } catch (e) { }
-							throw new Error('[Scholar代理] 超时后关闭迟到连接');
-						}
-						return socket;
-					});
-
-					const scholarTimeoutPromise = new Promise((_, reject) => {
-						scholarTimeoutId = setTimeout(() => {
-							scholarTimedOut = true;
-							reject(new Error(`[Scholar代理] CONNECT 超时 ${scholarConnectTimeoutMs}ms`));
-						}, scholarConnectTimeoutMs);
-					});
-
-					try {
-						newSocket = await Promise.race([scholarConnectPromise, scholarTimeoutPromise]);
-					} finally {
-						if (scholarTimeoutId !== null) clearTimeout(scholarTimeoutId);
-					}
-
+					);
 					log(`[Scholar代理] CONNECT成功: ${proxy}, 耗时 ${Date.now() - scholarConnectStartedAt}ms`);
 					break;
 				} catch (err) {
@@ -2388,6 +2364,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			if (!newSocket) {
 				throw new Error('[Scholar代理] Scholar专属代理连接失败');
 			}
+
 
 
 			if (本次发送首包) 已通过代理发送首包 = true;
