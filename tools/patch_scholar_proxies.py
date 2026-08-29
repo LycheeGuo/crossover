@@ -4,70 +4,84 @@ import re
 path = Path('_worker.js')
 text = path.read_text(encoding='utf-8')
 
-# Keep only the six fastest proxies that passed the second-round
-# HTTPS CONNECT + Google Scholar validation on 2026-08-29.
-verified = [
-    'https://134.209.15.92:443',
-    'https://133.242.152.27:443',
-    'https://193.49.168.97:443',
-    'https://193.49.168.100:443',
-    'https://192.126.96.110:443',
-    'https://133.167.87.173:443',
+# Restore the original Scholar proxy pool that was previously working in-browser.
+# Keep a stable order: first proxy is primary; the rest are connection-failure fallbacks.
+proxies = [
+    'http://82.66.253.131:9080',
+    'http://46.30.160.47:7070',
+    'http://102.134.49.165:6005',
+    'http://118.163.198.107:1168',
+    'http://211.75.210.107:1168',
 ]
 
-pool = '''// Google Scholar HTTPS CONNECT proxy pool.
-// Six fastest proxies verified on 2026-08-29.
+pool = '''// Google Scholar proxy pool.
+// Original browser-verified pool; fixed order, fallback only on connection failure.
 const GOOGLE_SCHOLAR_PROXIES = `
 %s
-`.trim().split(/\\s+/);''' % '\n'.join(verified)
+`.trim().split(/\\s+/);''' % '\n'.join(proxies)
 
 pool_pattern = re.compile(
-    r"// Google Scholar HTTPS CONNECT proxy pool\.\s*"
+    r"// Google Scholar (?:HTTPS CONNECT )?proxy pool\.\s*"
     r"//[^\n]*\n"
     r"const GOOGLE_SCHOLAR_PROXIES\s*=\s*`.*?`\.trim\(\)\.split\(/\\s\+/\);",
     re.DOTALL,
 )
-# Use a callable replacement so JavaScript backslashes such as \s are copied
-# literally instead of being interpreted by Python's re replacement parser.
 text, pool_count = pool_pattern.subn(lambda _: pool, text, count=1)
 if pool_count != 1:
     raise SystemExit(f'Expected one Scholar proxy pool, found {pool_count}')
 
-# Match Google Scholar regional hostnames without routing all Google traffic.
-# Examples: scholar.google.com, scholar.google.de, scholar.google.co.jp,
-# scholar.google.com.hk, scholar.google.co.uk, plus Scholar cached-content host.
+# Keep regional Scholar hostname support.
 new_host_match = "const isScholar = /^(?:scholar\\.google\\.(?:[a-z]{2,63}|(?:com|co)\\.[a-z]{2})|scholar\\.googleusercontent\\.com)$/i.test(host) && GOOGLE_SCHOLAR_PROXIES.length > 0;"
 host_pattern = re.compile(
     r"const isScholar\s*=\s*[^;]+&&\s*GOOGLE_SCHOLAR_PROXIES\.length\s*>\s*0;"
 )
-# Same reason here: the JavaScript regex contains literal backslashes.
 text, host_count = host_pattern.subn(lambda _: new_host_match, text, count=1)
 if host_count != 1:
     raise SystemExit(f'Expected one isScholar matcher, found {host_count}')
 
-# Normalize the runtime strategy to six proxies, racing two at a time.
-strategy_pattern = re.compile(
-    r"\t\t\tconst scholarCandidateLimit = Math\.min\(16, GOOGLE_SCHOLAR_PROXIES\.length\);\r?\n"
-    r"\t\t\tconst scholarFastRandom = .*?;\r?\n"
-    r"\t\t\tconst scholarCandidates = .*?;\r?\n"
-    r"\t\t\tconst scholarBatchSize = 4;\r?\n"
-    r"\t\t\tconst scholarAttemptTimeoutMs = 4500;",
+# Remove randomization / concurrent racing. Keep one stable Scholar exit IP for normal browsing.
+# Only move to the next proxy if the current proxy cannot establish the CONNECT tunnel.
+sequential_block = '''\t\t\tconst proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES];
+
+\t\t\tfor (const proxy of proxiesToTry) {
+\t\t\t\ttry {
+\t\t\t\t\tlog(`[Scholar代理] 尝试连接到: ${proxy}`);
+\t\t\t\t\tconst proxyAddressStr = proxy.replace(/^https?:\\/\\//i, '');
+\t\t\t\t\tconst scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
+\t\t\t\t\tconst scholarProxyIsHTTPS = /^https:\\/\\//i.test(proxy);
+\t\t\t\t\tnewSocket = await httpConnect(host, portNum, 本次首包数据, scholarProxyIsHTTPS, TCP连接, scholarProxyConfig);
+\t\t\t\t\tlog(`[Scholar代理] 连接成功: ${proxy}`);
+\t\t\t\t\tbreak;
+\t\t\t\t} catch (err) {
+\t\t\t\t\tlog(`[Scholar代理] 连接失败: ${proxy}, 错误: ${err?.message || err}`);
+\t\t\t\t}
+\t\t\t}
+
+\t\t\tif (!newSocket) {
+\t\t\t\tthrow new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+\t\t\t}
+
+'''
+
+race_pattern = re.compile(
+    r"\t\t\t// Scholar proxies are public.*?"
+    r"(?=\t\t\tif \(本次发送首包\) 已通过代理发送首包 = true;)",
     re.DOTALL,
 )
-new_strategy = '''\t\t\tconst scholarCandidates = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);
-\t\t\tconst scholarBatchSize = 2;
-\t\t\tconst scholarAttemptTimeoutMs = 4000;'''
-text, strategy_count = strategy_pattern.subn(lambda _: new_strategy, text, count=1)
+text, race_count = race_pattern.subn(lambda _: sequential_block, text, count=1)
 
-# If the strategy was already reduced by an earlier run, keep it as-is.
-if strategy_count == 0:
-    already_reduced = (
-        'const scholarCandidates = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);' in text
-        and 'const scholarBatchSize = 2;' in text
-        and 'const scholarAttemptTimeoutMs = 4000;' in text
+# If an earlier version is already sequential, normalize that block instead.
+if race_count == 0:
+    old_seq_pattern = re.compile(
+        r"\t\t\t(?:const|let) proxiesToTry = .*?"
+        r"\t\t\tif \(!newSocket\) \{\r?\n"
+        r"\t\t\t\tthrow new Error\('\[Scholar代理\].*?'\);\r?\n"
+        r"\t\t\t\}\r?\n",
+        re.DOTALL,
     )
-    if not already_reduced:
-        raise SystemExit('Scholar racing strategy was not found')
+    text, seq_count = old_seq_pattern.subn(lambda _: sequential_block, text, count=1)
+    if seq_count != 1:
+        raise SystemExit('Scholar connection strategy block was not found')
 
 path.write_text(text, encoding='utf-8')
-print('Scholar patch applied: 6 proxies, 2-way racing, regional scholar.google.* host matching')
+print('Restored original 5 Scholar proxies in fixed fallback order; regional Scholar domains retained')
