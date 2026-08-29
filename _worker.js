@@ -1,6 +1,6 @@
 const Version = '2026-08-11 14:45:22';
 let config_JSON, 缓存SOCKS5白名单 = null, 调试日志打印 = false;
-let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
+let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////全局常量和工具函数///////////////////////////////////////////////
 const WS早期数据最大字节 = 8 * 1024, WS早期数据最大头长度 = Math.ceil(WS早期数据最大字节 * 4 / 3) + 4;
@@ -12,6 +12,13 @@ const 特征码字典 = [
 	(Proxy.name + "IP").toUpperCase(),
 	(String.fromCharCode(67, 109) + URL.name[2] + 'i' + URL.name[0]).toLowerCase(),
 	String(2407 * 300 - 10).split('').reverse().join('')
+];
+const GOOGLE_SCHOLAR_PROXIES = [
+    'http://82.66.253.131:9080',
+    'http://46.30.160.47:7070',
+    'http://102.134.49.165:6005',
+    'http://118.163.198.107:1168',
+    'http://211.75.210.107:1168'
 ];
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
 export default {
@@ -2166,7 +2173,7 @@ async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 	return new Uint8Array(pt);
 }
 
-async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID, request = null, 反代上下文 = {}, 允许木马反代 = false, 木马反代首包数据 = null, 仅建立连接 = false) {
+async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID, request = null, 反代上下文 = {}, 允许木马反代 = false, 木马反代首包数据 = null) {
 	const ctx反代IP = 反代上下文.反代IP || '';
 	const ctx代理类型 = 反代上下文.代理类型 !== undefined ? 反代上下文.代理类型 : null;
 	const ctx代理全局 = 反代上下文.代理全局 !== undefined ? 反代上下文.代理全局 : false;
@@ -2180,38 +2187,9 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	const 使用木马反代 = 允许木马反代 && (反代上下文.木马反代地址 || null);
 	const 木马反代目标 = 使用木马反代 ? 反代上下文.木马反代地址 : null;
 	const 木马反代握手数据 = 使用木马反代 ? 提取木马反代握手数据(木马反代首包数据, rawData) : null;
-	let 待发送响应头 = respHeader;
-	const 取出响应头 = () => {
-		const header = 待发送响应头;
-		待发送响应头 = null;
-		return header;
-	};
-	if (!Number.isInteger(remoteConnWrapper.generation)) remoteConnWrapper.generation = 0;
 
-	const 安装当前连接 = async (socket, generation, downlinkDrain, retryFunc = null) => {
-		try { await downlinkDrain } catch (e) {
-			if (remoteConnWrapper.downlinkDrain === downlinkDrain) remoteConnWrapper.downlinkDrain = Promise.resolve();
-			try { socket?.close?.() } catch (_) { }
-			if (remoteConnWrapper.generation === generation) closeSocketQuietly(ws);
-			throw e;
-		}
-		if (remoteConnWrapper.downlinkDrain === downlinkDrain) remoteConnWrapper.downlinkDrain = Promise.resolve();
-		const 连接仍有效 = () => remoteConnWrapper.generation === generation && remoteConnWrapper.socket === socket;
-		if (remoteConnWrapper.generation !== generation || ws.readyState !== WebSocket.OPEN) {
-			try { socket?.close?.() } catch (e) { }
-			if (remoteConnWrapper.generation === generation) remoteConnWrapper.socket = null;
-			throw new Error('connection superseded or client closed');
-		}
-		remoteConnWrapper.socket = socket;
-		if (仅建立连接) return socket;
-		connectStreams(socket, ws, 取出响应头, retryFunc, 连接仍有效, remoteConnWrapper).catch(err => {
-			if (!连接仍有效()) return;
-			log(`[TCP下行] 处理失败: ${err?.message || err}`);
-			try { socket?.close?.() } catch (e) { }
-			closeSocketQuietly(ws);
-		});
-		return true;
-	};
+	// [新增] 识别是否为学术请求
+	const isScholar = host.includes('scholar.google.com') && GOOGLE_SCHOLAR_PROXIES.length > 0;
 
 	async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
 		await Promise.race([
@@ -2344,7 +2322,58 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 		if (启用反代失败兜底) return connectDirect(address, port, data, false);
 		else {
+			closeSocketQuietly(ws);
 			throw new Error('[反代连接] 所有反代连接失败，且未启用反代兜底，连接终止。');
+		}
+	}
+
+	// [新增] 谷歌学术专属连接方法
+	async function connectToScholar(允许发送首包 = true) {
+		if (remoteConnWrapper.connectingPromise) {
+			await remoteConnWrapper.connectingPromise;
+			return;
+		}
+
+		const 本次发送首包 = 允许发送首包 && !已通过代理发送首包 && 有效数据长度(rawData) > 0;
+		const 本次首包数据 = 本次发送首包 ? rawData : null;
+
+		const 当前连接任务 = (async () => {
+			let newSocket = null;
+			let proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);
+
+			for (const proxy of proxiesToTry) {
+				try {
+					log(`[Scholar代理] 尝试连接到: ${proxy}`);
+					const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
+					
+					// 动态解析代理地址为配置对象，然后传入新版的 httpConnect
+					const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
+					newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接, scholarProxyConfig);
+					
+					log(`[Scholar代理] 连接成功: ${proxy}`);
+					break;
+				} catch (err) {
+					log(`[Scholar代理] 连接失败: ${proxy}, 错误: ${err.message}`);
+				}
+			}
+
+			if (!newSocket) {
+				throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+			}
+
+			if (本次发送首包) 已通过代理发送首包 = true;
+			remoteConnWrapper.socket = newSocket;
+			newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
+			connectStreams(newSocket, ws, respHeader, null);
+		})();
+
+		remoteConnWrapper.connectingPromise = 当前连接任务;
+		try {
+			await 当前连接任务;
+		} finally {
+			if (remoteConnWrapper.connectingPromise === 当前连接任务) {
+				remoteConnWrapper.connectingPromise = null;
+			}
 		}
 	}
 
@@ -2353,7 +2382,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			await remoteConnWrapper.connectingPromise;
 			return;
 		}
-		const { generation: 当前连接世代, downlinkDrain } = 开始TCP连接世代(remoteConnWrapper);
 
 		let 本次发送首包 = false, 本次首包数据 = null;
 		if (使用木马反代) {
@@ -2369,53 +2397,46 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		}
 
 		const 当前连接任务 = (async () => {
-			let newSocket = null;
-			try {
-				if (使用木马反代) {
-					log(`[木马反代] 代理到: ${host}:${portNum}`);
-					newSocket = await 连接木马反代(本次首包数据, TCP连接, 木马反代目标);
-				} else if (ctx代理类型 === 'socks5') {
-					log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
-					newSocket = await socks5Connect(host, portNum, 本次首包数据, TCP连接, ctx代理参数);
-				} else if (ctx代理类型 === 'http') {
-					log(`[HTTP代理] 代理到: ${host}:${portNum}`);
-					newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接, ctx代理参数);
-				} else if (ctx代理类型 === 'https') {
-					log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
-					newSocket = isIPHostname(ctx代理参数.hostname)
-						? await httpsConnect(host, portNum, 本次首包数据, TCP连接, ctx代理参数)
-						: await httpConnect(host, portNum, 本次首包数据, true, TCP连接, ctx代理参数);
-				} else if (ctx代理类型 === 'turn') {
-					log(`[TURN代理] 代理到: ${host}:${portNum}`);
-					newSocket = await turnConnect(ctx代理参数, host, portNum, TCP连接);
-					if (有效数据长度(本次首包数据) > 0) {
-						const writer = newSocket.writable.getWriter();
-						try { await writer.write(数据转Uint8Array(本次首包数据)) }
-						finally { try { writer.releaseLock() } catch (e) { } }
-					}
-				} else if (ctx代理类型 === 'sstp') {
-					log(`[SSTP代理] 代理到: ${host}:${portNum}`);
-					newSocket = await sstpConnect(ctx代理参数, host, portNum, TCP连接);
-					if (有效数据长度(本次首包数据) > 0) {
-						const writer = newSocket.writable.getWriter();
-						try { await writer.write(数据转Uint8Array(本次首包数据)) }
-						finally { try { writer.releaseLock() } catch (e) { } }
-					}
-				} else {
-					log(`[反代连接] 代理到: ${host}:${portNum}`);
-					const 所有反代数组 = await 解析地址端口(ctx反代IP, host, yourUUID);
-					newSocket = await connectProxyIP(`${特征码字典[0]}.tp1.${特征码字典[2]}.xyz`, 1, 本次首包数据, 所有反代数组, ctx反代兜底);
+			let newSocket;
+			if (使用木马反代) {
+				log(`[木马反代] 代理到: ${host}:${portNum}`);
+				newSocket = await 连接木马反代(本次首包数据, TCP连接, 木马反代目标);
+			} else if (ctx代理类型 === 'socks5') {
+				log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
+				newSocket = await socks5Connect(host, portNum, 本次首包数据, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'http') {
+				log(`[HTTP代理] 代理到: ${host}:${portNum}`);
+				newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'https') {
+				log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
+				newSocket = isIPHostname(ctx代理参数.hostname)
+					? await httpsConnect(host, portNum, 本次首包数据, TCP连接, ctx代理参数)
+					: await httpConnect(host, portNum, 本次首包数据, true, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'turn') {
+				log(`[TURN代理] 代理到: ${host}:${portNum}`);
+				newSocket = await turnConnect(ctx代理参数, host, portNum, TCP连接);
+				if (有效数据长度(本次首包数据) > 0) {
+					const writer = newSocket.writable.getWriter();
+					try { await writer.write(数据转Uint8Array(本次首包数据)) }
+					finally { try { writer.releaseLock() } catch (e) { } }
 				}
-				await 安装当前连接(newSocket, 当前连接世代, downlinkDrain);
-				if (本次发送首包) 已通过代理发送首包 = true;
-			} catch (err) {
-				try { newSocket?.close?.() } catch (e) { }
-				if (remoteConnWrapper.generation === 当前连接世代) {
-					remoteConnWrapper.socket = null;
-					closeSocketQuietly(ws);
-					throw err;
+			} else if (ctx代理类型 === 'sstp') {
+				log(`[SSTP代理] 代理到: ${host}:${portNum}`);
+				newSocket = await sstpConnect(ctx代理参数, host, portNum, TCP连接);
+				if (有效数据长度(本次首包数据) > 0) {
+					const writer = newSocket.writable.getWriter();
+					try { await writer.write(数据转Uint8Array(本次首包数据)) }
+					finally { try { writer.releaseLock() } catch (e) { } }
 				}
+			} else {
+				log(`[反代连接] 代理到: ${host}:${portNum}`);
+				const 所有反代数组 = await 解析地址端口(ctx反代IP, host, yourUUID);
+				newSocket = await connectProxyIP(`${特征码字典[0]}.tp1.${特征码字典[2]}.xyz`, 1, 本次首包数据, 所有反代数组, ctx反代兜底);
 			}
+			if (本次发送首包) 已通过代理发送首包 = true;
+			remoteConnWrapper.socket = newSocket;
+			newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
+			connectStreams(newSocket, ws, respHeader, null);
 		})();
 
 		remoteConnWrapper.connectingPromise = 当前连接任务;
@@ -2427,43 +2448,64 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			}
 		}
 	}
-	remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
 
-	if (ctx代理类型 && (ctx代理全局 || SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host)))) {
-		log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS/TURN/SSTP 全局代理`);
-		try {
-			await connecttoPry();
-			if (仅建立连接) return remoteConnWrapper.socket;
-		} catch (err) {
-			log(`[TCP转发] SOCKS5/HTTP/HTTPS/TURN/SSTP 代理连接失败: ${err.message}`);
-			throw err;
+	// [修改] 更新断线重连逻辑以支持 Scholar 降级
+	remoteConnWrapper.retryConnect = async () => {
+		if (isScholar) {
+			try {
+				await connectToScholar(!已通过代理发送首包);
+			} catch (err) {
+				log(`[重连补救] Scholar 代理重连失败，转为常规重连`);
+				await connecttoPry(!已通过代理发送首包);
+			}
+		} else {
+			await connecttoPry(!已通过代理发送首包);
 		}
-	} else {
-		let 直连世代 = remoteConnWrapper.generation;
-		try {
-			log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
-			const 世代连接 = 开始TCP连接世代(remoteConnWrapper);
-			直连世代 = 世代连接.generation;
-			const initialSocket = await connectDirect(host, portNum, rawData, true);
-			await 安装当前连接(initialSocket, 直连世代, 世代连接.downlinkDrain, async () => {
-				if (remoteConnWrapper.generation !== 直连世代 || remoteConnWrapper.socket !== initialSocket) return;
+	};
+
+	// [新增] 将原有的底部路由逻辑提取为独立方法，方便降级调用
+	const 启动标准兜底策略 = async () => {
+		if (ctx代理类型 && (ctx代理全局 || SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host)))) {
+			log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS/TURN/SSTP 全局代理`);
+			try {
 				await connecttoPry();
-			});
-			if (仅建立连接) return initialSocket;
-		} catch (err) {
-			log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
-			if (remoteConnWrapper.generation !== 直连世代) throw err;
-			if (err instanceof Error && err.name === '预加载解析为空') {
-				closeSocketQuietly(ws);
+			} catch (err) {
+				log(`[TCP转发] SOCKS5/HTTP/HTTPS/TURN/SSTP 代理连接失败: ${err.message}`);
 				throw err;
 			}
-			if (ws.readyState !== WebSocket.OPEN) throw err;
-			await connecttoPry();
-			if (仅建立连接) return remoteConnWrapper.socket;
+		} else {
+			try {
+				log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
+				const initialSocket = await connectDirect(host, portNum, rawData, true);
+				remoteConnWrapper.socket = initialSocket;
+				connectStreams(initialSocket, ws, respHeader, async () => {
+					if (remoteConnWrapper.socket !== initialSocket) return;
+					await connecttoPry();
+				});
+			} catch (err) {
+				log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
+				if (err instanceof Error && err.name === '预加载解析为空') {
+					closeSocketQuietly(ws);
+					throw err;
+				}
+				await connecttoPry();
+			}
 		}
+	};
+
+	// [修改] 核心路由入口，优先拦截 Scholar 请求
+	if (isScholar) {
+		log(`[TCP转发] 命中 Google Scholar，使用专属 HTTP 代理池`);
+		try {
+			await connectToScholar();
+		} catch (err) {
+			log(`[TCP转发] Scholar 代理完全失效: ${err.message}。正在启动常规兜底补救措施...`);
+			await 启动标准兜底策略();
+		}
+	} else {
+		await 启动标准兜底策略();
 	}
 }
-
 async function forwardataudp(udpChunk, webSocket, respHeader, request, 响应封装器 = null) {
 	const 请求数据 = 数据转Uint8Array(udpChunk);
 	const 请求字节数 = 请求数据.byteLength;
