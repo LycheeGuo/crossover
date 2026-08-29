@@ -13,13 +13,127 @@ const 特征码字典 = [
 	(String.fromCharCode(67, 109) + URL.name[2] + 'i' + URL.name[0]).toLowerCase(),
 	String(2407 * 300 - 10).split('').reverse().join('')
 ];
-const GOOGLE_SCHOLAR_PROXIES = [
-    'http://82.66.253.131:9080',
-    'http://46.30.160.47:7070',
-    'http://102.134.49.165:6005',
-    'http://118.163.198.107:1168',
-    'http://211.75.210.107:1168'
-];
+// Google Scholar HTTPS CONNECT proxy pool.
+// Validated on 2026-08-29 and sorted by measured Scholar latency (fastest first).
+const GOOGLE_SCHOLAR_PROXIES = `
+https://134.209.15.92:443
+https://133.242.152.27:443
+https://193.49.168.97:443
+https://193.49.168.100:443
+https://192.126.96.110:443
+https://133.167.87.173:443
+https://132.208.244.66:443
+https://35.247.136.78:443
+https://52.140.7.131:443
+https://146.189.217.231:443
+https://205.178.144.247:8443
+https://31.31.78.117:443
+https://148.243.232.51:443
+https://193.25.2.239:443
+https://138.66.66.136:443
+https://198.54.223.176:443
+https://162.55.97.61:443
+https://161.35.159.29:443
+https://4.213.225.50:443
+https://84.72.72.153:443
+https://51.38.179.176:443
+https://152.70.202.146:443
+https://80.72.39.35:443
+https://150.136.9.146:443
+https://35.187.237.178:443
+https://212.243.240.120:443
+https://81.171.24.164:443
+https://45.9.61.18:443
+https://79.188.239.41:8443
+https://146.189.216.139:443
+https://157.90.167.183:443
+https://152.71.251.13:443
+https://209.63.239.148:443
+https://80.77.112.216:443
+https://46.229.114.132:40000
+https://208.169.72.50:443
+https://146.189.216.138:443
+https://200.23.153.161:443
+https://158.195.68.53:443
+https://196.21.109.82:443
+https://82.196.220.217:443
+https://49.50.72.246:443
+https://217.160.25.90:443
+https://91.227.97.113:443
+https://108.60.228.210:443
+https://146.48.93.16:443
+https://190.113.112.147:443
+https://66.70.143.16:443
+https://194.195.87.167:8081
+https://79.188.239.44:8443
+https://201.54.216.54:443
+https://104.236.195.215:443
+https://79.188.239.40:8443
+https://150.136.74.90:443
+https://79.133.217.233:443
+https://168.138.159.191:443
+https://149.210.158.107:5001
+https://213.96.140.33:443
+https://89.234.183.82:443
+https://193.77.81.97:443
+https://178.237.108.214:443
+https://149.210.243.125:443
+https://113.23.216.128:9088
+https://194.195.87.167:8080
+https://192.154.227.9:3001
+https://79.133.217.237:443
+https://93.115.26.111:443
+https://176.102.64.4:443
+https://79.188.239.43:8443
+https://51.91.251.117:443
+https://181.191.209.142:443
+https://196.21.60.44:443
+https://87.238.253.66:443
+https://165.22.60.108:443
+https://35.212.100.37:443
+https://46.10.214.92:443
+https://195.14.103.106:9090
+https://79.188.239.42:8443
+https://85.158.220.164:443
+https://130.253.2.250:443
+https://195.200.166.126:443
+https://168.205.255.238:443
+https://185.35.199.212:5443
+https://130.52.199.50:443
+https://194.249.231.22:443
+https://5.178.98.214:443
+https://168.167.220.27:443
+https://79.133.217.232:443
+https://140.238.248.0:443
+https://41.205.129.179:443
+https://46.101.22.14:443
+https://104.236.205.59:443
+https://129.151.160.199:443
+https://147.160.161.12:8081
+https://92.242.41.77:443
+https://200.133.218.122:443
+https://79.133.217.236:443
+https://134.0.63.185:443
+https://138.108.28.48:443
+https://74.103.66.15:443
+https://77.81.71.62:443
+https://18.169.247.230:443
+https://113.23.216.129:9088
+https://148.243.232.49:443
+https://79.188.239.46:8443
+https://45.56.228.8:443
+https://79.188.239.47:8443
+https://203.193.169.112:443
+https://88.197.53.165:443
+https://178.115.238.253:443
+https://95.110.141.122:8888
+https://200.249.205.36:443
+https://34.93.103.38:443
+https://160.242.47.197:443
+https://189.39.119.69:443
+https://34.93.13.41:443
+https://189.50.88.34:443
+`.trim().split(/\s+/);
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
 export default {
 	async fetch(request, env, ctx) {
@@ -2339,7 +2453,11 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 		const 当前连接任务 = (async () => {
 			let newSocket = null;
-			let proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);
+			// Prefer the low-latency tier, but randomize inside it to avoid pinning every request to one public proxy.
+			const scholarFastTierSize = Math.min(20, GOOGLE_SCHOLAR_PROXIES.length);
+			const scholarFastTier = GOOGLE_SCHOLAR_PROXIES.slice(0, scholarFastTierSize).sort(() => Math.random() - 0.5);
+			const scholarFallbackTier = GOOGLE_SCHOLAR_PROXIES.slice(scholarFastTierSize);
+			let proxiesToTry = scholarFastTier.concat(scholarFallbackTier);
 
 			for (const proxy of proxiesToTry) {
 				try {
@@ -2348,7 +2466,8 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 					
 					// 动态解析代理地址为配置对象，然后传入新版的 httpConnect
 					const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
-					newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接, scholarProxyConfig);
+					const scholarProxyIsHTTPS = /^https:\/\//i.test(proxy);
+					newSocket = await httpConnect(host, portNum, 本次首包数据, scholarProxyIsHTTPS, TCP连接, scholarProxyConfig);
 					
 					log(`[Scholar代理] 连接成功: ${proxy}`);
 					break;
