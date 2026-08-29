@@ -27,7 +27,9 @@ pool_pattern = re.compile(
     r"const GOOGLE_SCHOLAR_PROXIES\s*=\s*`.*?`\.trim\(\)\.split\(/\\s\+/\);",
     re.DOTALL,
 )
-text, pool_count = pool_pattern.subn(pool, text, count=1)
+# Use a callable replacement so JavaScript backslashes such as \s are copied
+# literally instead of being interpreted by Python's re replacement parser.
+text, pool_count = pool_pattern.subn(lambda _: pool, text, count=1)
 if pool_count != 1:
     raise SystemExit(f'Expected one Scholar proxy pool, found {pool_count}')
 
@@ -38,7 +40,8 @@ new_host_match = "const isScholar = /^(?:scholar\\.google\\.(?:[a-z]{2,63}|(?:co
 host_pattern = re.compile(
     r"const isScholar\s*=\s*[^;]+&&\s*GOOGLE_SCHOLAR_PROXIES\.length\s*>\s*0;"
 )
-text, host_count = host_pattern.subn(new_host_match, text, count=1)
+# Same reason here: the JavaScript regex contains literal backslashes.
+text, host_count = host_pattern.subn(lambda _: new_host_match, text, count=1)
 if host_count != 1:
     raise SystemExit(f'Expected one isScholar matcher, found {host_count}')
 
@@ -54,7 +57,7 @@ strategy_pattern = re.compile(
 new_strategy = '''\t\t\tconst scholarCandidates = [...GOOGLE_SCHOLAR_PROXIES].sort(() => Math.random() - 0.5);
 \t\t\tconst scholarBatchSize = 2;
 \t\t\tconst scholarAttemptTimeoutMs = 4000;'''
-text, strategy_count = strategy_pattern.subn(new_strategy, text, count=1)
+text, strategy_count = strategy_pattern.subn(lambda _: new_strategy, text, count=1)
 
 # If the strategy was already reduced by an earlier run, keep it as-is.
 if strategy_count == 0:
