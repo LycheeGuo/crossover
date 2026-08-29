@@ -14,7 +14,7 @@ const 特征码字典 = [
 	String(2407 * 300 - 10).split('').reverse().join('')
 ];
 // Google Scholar proxy pool.
-// Original browser-verified pool; fixed order, fallback only on connection failure.
+// Browser-verified primary proxy. Keep the exit IP stable during a Scholar session.
 const GOOGLE_SCHOLAR_PROXIES = `
 http://46.30.160.47:7070
 `.trim().split(/\s+/);
@@ -2187,7 +2187,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	const 木马反代握手数据 = 使用木马反代 ? 提取木马反代握手数据(木马反代首包数据, rawData) : null;
 
 	// [新增] 识别是否为学术请求
-	const isScholar = /^(?:scholar\.google\.(?:[a-z]{2,63}|(?:com|co)\.[a-z]{2})|scholar\.googleusercontent\.com)$/i.test(host) && GOOGLE_SCHOLAR_PROXIES.length > 0;
+	const isScholar = /^scholar\.google\.(?:[a-z]{2,63}|(?:com|co)\.[a-z]{2})$/i.test(host) && GOOGLE_SCHOLAR_PROXIES.length > 0;
 
 	async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
 		await Promise.race([
@@ -2338,24 +2338,57 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		const 当前连接任务 = (async () => {
 			let newSocket = null;
 			const proxiesToTry = [...GOOGLE_SCHOLAR_PROXIES];
+			const scholarConnectTimeoutMs = 6000;
 
 			for (const proxy of proxiesToTry) {
+				const scholarConnectStartedAt = Date.now();
 				try {
 					log(`[Scholar代理] 尝试连接到: ${proxy}`);
 					const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
 					const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
 					const scholarProxyIsHTTPS = /^https:\/\//i.test(proxy);
-					newSocket = await httpConnect(host, portNum, 本次首包数据, scholarProxyIsHTTPS, TCP连接, scholarProxyConfig);
-					log(`[Scholar代理] 连接成功: ${proxy}`);
+					let scholarTimedOut = false;
+					let scholarTimeoutId = null;
+
+					const scholarConnectPromise = httpConnect(
+						host,
+						portNum,
+						本次首包数据,
+						scholarProxyIsHTTPS,
+						TCP连接,
+						scholarProxyConfig
+					).then(socket => {
+						if (scholarTimedOut) {
+							try { socket.close(); } catch (e) { }
+							throw new Error('[Scholar代理] 超时后关闭迟到连接');
+						}
+						return socket;
+					});
+
+					const scholarTimeoutPromise = new Promise((_, reject) => {
+						scholarTimeoutId = setTimeout(() => {
+							scholarTimedOut = true;
+							reject(new Error(`[Scholar代理] CONNECT 超时 ${scholarConnectTimeoutMs}ms`));
+						}, scholarConnectTimeoutMs);
+					});
+
+					try {
+						newSocket = await Promise.race([scholarConnectPromise, scholarTimeoutPromise]);
+					} finally {
+						if (scholarTimeoutId !== null) clearTimeout(scholarTimeoutId);
+					}
+
+					log(`[Scholar代理] CONNECT成功: ${proxy}, 耗时 ${Date.now() - scholarConnectStartedAt}ms`);
 					break;
 				} catch (err) {
-					log(`[Scholar代理] 连接失败: ${proxy}, 错误: ${err?.message || err}`);
+					log(`[Scholar代理] 连接失败: ${proxy}, 耗时 ${Date.now() - scholarConnectStartedAt}ms, 错误: ${err?.message || err}`);
 				}
 			}
 
 			if (!newSocket) {
-				throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+				throw new Error('[Scholar代理] Scholar专属代理连接失败');
 			}
+
 
 			if (本次发送首包) 已通过代理发送首包 = true;
 			remoteConnWrapper.socket = newSocket;
