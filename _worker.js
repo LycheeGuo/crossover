@@ -2453,31 +2453,67 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 		const 当前连接任务 = (async () => {
 			let newSocket = null;
-			// Prefer the low-latency tier, but randomize inside it to avoid pinning every request to one public proxy.
-			const scholarFastTierSize = Math.min(20, GOOGLE_SCHOLAR_PROXIES.length);
-			const scholarFastTier = GOOGLE_SCHOLAR_PROXIES.slice(0, scholarFastTierSize).sort(() => Math.random() - 0.5);
-			const scholarFallbackTier = GOOGLE_SCHOLAR_PROXIES.slice(scholarFastTierSize);
-			let proxiesToTry = scholarFastTier.concat(scholarFallbackTier);
+			// Scholar proxies are public and can become half-open. Race a small fast tier
+			// instead of waiting for one proxy at a time. Keep the full validated pool above,
+			// but only use the fastest candidates during interactive browser traffic.
+			const scholarCandidateLimit = Math.min(16, GOOGLE_SCHOLAR_PROXIES.length);
+			const scholarFastRandom = GOOGLE_SCHOLAR_PROXIES.slice(0, Math.min(8, scholarCandidateLimit)).sort(() => Math.random() - 0.5);
+			const scholarCandidates = scholarFastRandom.concat(GOOGLE_SCHOLAR_PROXIES.slice(8, scholarCandidateLimit));
+			const scholarBatchSize = 4;
+			const scholarAttemptTimeoutMs = 4500;
 
-			for (const proxy of proxiesToTry) {
+			const 连接单个Scholar代理 = async (proxy, batchState) => {
+				const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
+				const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
+				const scholarProxyIsHTTPS = /^https:\/\//i.test(proxy);
+				let timedOut = false;
+
+				const connectPromise = httpConnect(host, portNum, null, scholarProxyIsHTTPS, TCP连接, scholarProxyConfig).then(socket => {
+					// A timed-out or losing connection must not stay open in the Worker.
+					if (timedOut || batchState.winner) {
+						try { socket.close(); } catch (e) { }
+						throw new Error('[Scholar代理] 竞速落败');
+					}
+					batchState.winner = socket;
+					return { socket, proxy };
+				});
+
+				const timeoutPromise = new Promise((_, reject) => {
+					setTimeout(() => {
+						timedOut = true;
+						reject(new Error(`[Scholar代理] ${proxy} 超时 ${scholarAttemptTimeoutMs}ms`));
+					}, scholarAttemptTimeoutMs);
+				});
+
+				return Promise.race([connectPromise, timeoutPromise]);
+			};
+
+			for (let i = 0; i < scholarCandidates.length && !newSocket; i += scholarBatchSize) {
+				const batch = scholarCandidates.slice(i, i + scholarBatchSize);
+				const batchState = { winner: null };
+				log(`[Scholar代理] 并发尝试第 ${Math.floor(i / scholarBatchSize) + 1} 批: ${batch.join(', ')}`);
 				try {
-					log(`[Scholar代理] 尝试连接到: ${proxy}`);
-					const proxyAddressStr = proxy.replace(/^https?:\/\//i, '');
-					
-					// 动态解析代理地址为配置对象，然后传入新版的 httpConnect
-					const scholarProxyConfig = await 获取SOCKS5账号(proxyAddressStr);
-					const scholarProxyIsHTTPS = /^https:\/\//i.test(proxy);
-					newSocket = await httpConnect(host, portNum, 本次首包数据, scholarProxyIsHTTPS, TCP连接, scholarProxyConfig);
-					
-					log(`[Scholar代理] 连接成功: ${proxy}`);
-					break;
+					const winner = await Promise.any(batch.map(proxy => 连接单个Scholar代理(proxy, batchState)));
+					newSocket = winner.socket;
+					log(`[Scholar代理] 竞速连接成功: ${winner.proxy}`);
 				} catch (err) {
-					log(`[Scholar代理] 连接失败: ${proxy}, 错误: ${err.message}`);
+					log(`[Scholar代理] 本批全部失败: ${err?.message || err}`);
 				}
 			}
 
 			if (!newSocket) {
-				throw new Error('[Scholar代理] 所有Scholar专属代理均连接失败');
+				throw new Error('[Scholar代理] 快速代理池均连接失败');
+			}
+
+			// Send the browser's first TLS packet only through the winning proxy. This avoids
+			// duplicating the same Scholar connection across every racing candidate.
+			if (本次发送首包 && 有效数据长度(本次首包数据) > 0) {
+				const scholarWriter = newSocket.writable.getWriter();
+				try {
+					await scholarWriter.write(数据转Uint8Array(本次首包数据));
+				} finally {
+					scholarWriter.releaseLock();
+				}
 			}
 
 			if (本次发送首包) 已通过代理发送首包 = true;
