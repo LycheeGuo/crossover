@@ -1375,11 +1375,16 @@ async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 		获取连接任务: () => remoteConnWrapper.connectingPromise,
 		释放写入器: 释放远端写入器,
 		重试连接: async () => {
-			if (typeof remoteConnWrapper.retryConnect !== 'function') throw new Error('retry unavailable');
-			await remoteConnWrapper.retryConnect();
-		},
-		关闭连接: err => 处理WS显式传输错误(err),
-		名称: 'WS上行'
+	      if (remoteConnWrapper.streamStarted) {
+		  throw new Error('TCP stream already started; socket replacement disabled');
+	      }
+	      if (typeof remoteConnWrapper.retryConnect !== 'function') {
+		       throw new Error('retry unavailable');
+	         }
+	        await remoteConnWrapper.retryConnect();
+	     },
+       关闭连接: err => 处理WS显式传输错误(err),
+        名称: 'WS上行'
 	});
 
 	const 写入远端 = async (chunk, allowRetry = true) => {
@@ -3042,9 +3047,10 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, is
 				const { done, value } = await reader.read();
 				if (!当前连接仍有效()) break;
 				if (done) break;
-				if (!value || value.byteLength === 0) continue;
-				hasData = true;
-				if (value.byteLength >= 下行Grain包字节) {
+                if (!value || value.byteLength === 0) continue;
+                hasData = true;
+                if (remoteConnWrapper) remoteConnWrapper.streamStarted = true;
+                if (value.byteLength >= 下行Grain包字节) {
 					await 下行发送器.flush();
 					await 下行发送器.直接发送(value);
 				} else {
@@ -3059,6 +3065,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, is
 				if (done) break;
 				if (!value || value.byteLength === 0) continue;
 				hasData = true;
+				if (remoteConnWrapper) remoteConnWrapper.streamStarted = true;
 				if (value.byteLength >= 下行Grain包字节) {
 					await 下行发送器.flush();
 					await 下行发送器.直接发送(value);
