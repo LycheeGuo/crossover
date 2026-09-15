@@ -1382,7 +1382,7 @@ async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 		名称: 'WS上行'
 	});
 
-	const 写入远端 = async (chunk) => {
+	const 写入远端 = async (chunk, allowRetry = true) => {
 		return 上行写入队列.写入(chunk, allowRetry);
 	};
 
