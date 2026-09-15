@@ -3023,411 +3023,64 @@ function 创建下行Grain发送器(webSocket, headerData = null, isActive = nul
 	};
 }
 
-// ============================================================================
-// Hybrid GrainTCP Downlink
-// 保留 crossover 的拨号 / ProxyIP / SOCKS / fallback，
-// TCP 建立后的下行改用 GrainTCP 风格：
-// 64KB BYOB + >=32KB 直发 + <32KB grain 聚合
-// ============================================================================
-
-function 创建HybridGrain下行(webSocket, headerData = null, isActive = null) {
-	const cap = 下行Grain包字节;                  // 32 KB
-	const tail = 下行Grain尾部阈值;              // 512 B
-	const low = Math.max(4096, tail * 12);
-
-	let queue = [];
-	let head = 0;
-	let bytes = 0;
-	let packBuffer = null;
-
-	let timer = null;
-	let generation = 0;
-	let scheduledGeneration = 0;
-	let waitRounds = 0;
-
-	let headerUsed = false;
-
-	const 当前有效 = () => !isActive || isActive();
-
-	const 获取一次响应头 = () => {
-		if (headerUsed) return null;
-
-		let h = typeof headerData === 'function'
-			? headerData()
-			: headerData;
-
-		headerUsed = true;
-
-		if (!h) return null;
-
-		try {
-			h = 数据转Uint8Array(h);
-		} catch (_) {
-			return null;
-		}
-
-		return h?.byteLength ? h : null;
-	};
-
-	const 清空 = () => {
-		queue = [];
-		head = 0;
-		bytes = 0;
-	};
-
-	const 压缩 = () => {
-		if (head > 32 && head * 2 >= queue.length) {
-			queue = queue.slice(head);
-			head = 0;
-		}
-	};
-
-	const 取出 = () => {
-		if (head >= queue.length) return null;
-
-		const chunk = queue[head];
-		queue[head++] = undefined;
-		bytes -= chunk.byteLength;
-
-		压缩();
-		return chunk;
-	};
-
-	const 收纳 = chunk => {
-		if (!chunk?.byteLength) return;
-		queue.push(chunk);
-		bytes += chunk.byteLength;
-	};
-
-	const 合包 = () => {
-		const first = 取出();
-		if (!first) return null;
-
-		if (head >= queue.length) return first;
-
-		let total = first.byteLength;
-		let end = head;
-
-		while (end < queue.length) {
-			const next = queue[end];
-			const nextTotal = total + next.byteLength;
-
-			if (nextTotal > cap) break;
-
-			total = nextTotal;
-			end++;
-		}
-
-		if (end === head) return first;
-
-		if (!packBuffer || packBuffer.byteLength < cap) {
-			packBuffer = new Uint8Array(cap);
-		}
-
-		packBuffer.set(first, 0);
-
-		let offset = first.byteLength;
-
-		while (head < end) {
-			const next = queue[head];
-			queue[head++] = undefined;
-			bytes -= next.byteLength;
-
-			packBuffer.set(next, offset);
-			offset += next.byteLength;
-		}
-
-		压缩();
-
-		// 必须复制，避免下一次复用 packBuffer 时修改已经 send 的 frame
-		return packBuffer.subarray(0, total).slice();
-	};
-
-	const 发送原始 = chunk => {
-		if (!chunk?.byteLength) return;
-		if (!当前有效()) return;
-		if (webSocket.readyState !== WebSocket.OPEN) return;
-
-		const responseHeader = 获取一次响应头();
-
-		if (responseHeader?.byteLength) {
-			const merged = new Uint8Array(
-				responseHeader.byteLength + chunk.byteLength
-			);
-
-			merged.set(responseHeader, 0);
-			merged.set(chunk, responseHeader.byteLength);
-
-			webSocket.send(merged);
-		} else {
-			webSocket.send(chunk);
-		}
-	};
-
-	const reap = () => {
-		if (timer) clearTimeout(timer);
-
-		timer = null;
-		waitRounds = 0;
-
-		if (!当前有效()) {
-			清空();
-			return;
-		}
-
-		for (;;) {
-			const chunk = 合包();
-			if (!chunk) break;
-			发送原始(chunk);
-		}
-	};
-
-	const ripen = () => {
-		if (head >= queue.length || timer) return;
-
-		if (bytes >= cap || cap - bytes < tail) {
-			reap();
-			return;
-		}
-
-		timer = setTimeout(() => {
-			timer = null;
-
-			if (!当前有效()) {
-				清空();
-				return;
-			}
-
-			if (head >= queue.length) return;
-
-			if (bytes >= cap || cap - bytes < tail) {
-				reap();
-				return;
-			}
-
-			if (
-				waitRounds < 下行Grain最大等待轮次 &&
-				(generation !== scheduledGeneration || bytes < low)
-			) {
-				waitRounds++;
-				scheduledGeneration = generation;
-				ripen();
-				return;
-			}
-
-			reap();
-		}, 1);
-	};
-
-	const send = input => {
-		if (!input?.byteLength) return;
-		if (!当前有效()) return;
-
-		let offset = 0;
-		const total = input.byteLength;
-
-		while (offset < total) {
-			const room = cap - bytes;
-			const remaining = total - offset;
-
-			if (!room) {
-				reap();
-				continue;
-			}
-
-			const n = Math.min(room, remaining);
-
-			const part =
-				offset || n !== total
-					? input.subarray(offset, offset + n)
-					: input;
-
-			收纳(part);
-			generation++;
-			offset += n;
-
-			if (bytes >= cap || cap - bytes < tail) {
-				reap();
-			} else {
-				ripen();
-			}
-		}
-	};
-
-	const direct = chunk => {
-		if (!chunk?.byteLength) return;
-		if (!当前有效()) return;
-
-		// 大包之前先把已经积累的小包发掉，保持严格顺序
-		reap();
-		发送原始(chunk);
-	};
-
-	return {
-		send,
-		direct,
-		reap,
-
-		async 停止并刷新() {
-			reap();
-		}
-	};
-}
-
-
-// ============================================================================
-// GrainTCP-style TCP -> WebSocket pump
-// ============================================================================
-
-async function connectStreams(
-	remoteSocket,
-	webSocket,
-	headerData,
-	retryFunc,
-	isCurrentSocket = null,
-	remoteConnWrapper = null
-) {
-	let hasData = false;
-	let reader = null;
-	let useBYOB = false;
-	let readError = null;
-
-	const CHUNK = 64 * 1024;
-	const DIRECT_THRESHOLD = CHUNK >> 1; // 32 KB
-
-	const 当前连接仍有效 = () =>
-		!isCurrentSocket || isCurrentSocket();
-
-	const tx = 创建HybridGrain下行(
-		webSocket,
-		headerData,
-		当前连接仍有效
-	);
-
-	const 下行控制器 = {
-		停止并刷新: () => tx.停止并刷新()
-	};
-
-	if (remoteConnWrapper) {
-		remoteConnWrapper.downlinkController = 下行控制器;
-	}
-
-	// GrainTCP：优先 BYOB
-	try {
-		reader = remoteSocket.readable.getReader({
-			mode: 'byob'
-		});
-		useBYOB = true;
-	} catch (_) {
-		reader = remoteSocket.readable.getReader();
-		useBYOB = false;
-	}
+async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, isCurrentSocket = null, remoteConnWrapper = null) {
+	let header = headerData, hasData = false, reader, useBYOB = false, readError = null;
+	const BYOB单次读取上限 = 64 * 1024;
+	const 当前连接仍有效 = () => !isCurrentSocket || isCurrentSocket();
+	const 下行发送器 = 创建下行Grain发送器(webSocket, header, 当前连接仍有效);
+	header = null;
+	const 下行控制器 = { 停止并刷新: () => 下行发送器.停止并刷新() };
+	if (remoteConnWrapper) remoteConnWrapper.downlinkController = 下行控制器;
+	try { remoteSocket.closed?.catch?.(() => { }) } catch (e) { }
+
+	try { reader = remoteSocket.readable.getReader({ mode: 'byob' }); useBYOB = true }
+	catch (e) { reader = remoteSocket.readable.getReader() }
 
 	try {
-		if (useBYOB) {
-			let buffer = new ArrayBuffer(CHUNK);
-
-			for (;;) {
-				const {
-					done,
-					value
-				} = await reader.read(
-					new Uint8Array(buffer, 0, CHUNK)
-				);
-
+		if (!useBYOB) {
+			while (true) {
+				const { done, value } = await reader.read();
 				if (!当前连接仍有效()) break;
 				if (done) break;
-				if (!value?.byteLength) continue;
-
+				if (!value || value.byteLength === 0) continue;
 				hasData = true;
-
-				if (remoteConnWrapper) {
-					remoteConnWrapper.streamStarted = true;
-				}
-
-				// GrainTCP 核心：
-				// >=32KB 不进复杂队列，直接 WS send
-				if (value.byteLength >= DIRECT_THRESHOLD) {
-					tx.reap();
-					tx.direct(value);
-
-					// value 已交给 WebSocket，立即换新 buffer
-					buffer = new ArrayBuffer(CHUNK);
+				if (value.byteLength >= 下行Grain包字节) {
+					await 下行发送器.flush();
+					await 下行发送器.直接发送(value);
 				} else {
-					// 小包复制后进入 grain；
-					// 原 BYOB buffer 可以安全继续使用
-					tx.send(value.slice());
-
-					buffer =
-						value.buffer.byteLength >= CHUNK
-							? value.buffer
-							: new ArrayBuffer(CHUNK);
+					await 下行发送器.发送(value);
 				}
 			}
 		} else {
-			// 某些 socket 不支持 BYOB 时的 fallback
-			for (;;) {
-				const {
-					done,
-					value
-				} = await reader.read();
-
+			let readBuffer = new ArrayBuffer(BYOB单次读取上限);
+			while (true) {
+				const { done, value } = await reader.read(new Uint8Array(readBuffer, 0, BYOB单次读取上限));
 				if (!当前连接仍有效()) break;
 				if (done) break;
-				if (!value?.byteLength) continue;
-
+				if (!value || value.byteLength === 0) continue;
 				hasData = true;
-
-				if (remoteConnWrapper) {
-					remoteConnWrapper.streamStarted = true;
-				}
-
-				if (value.byteLength >= DIRECT_THRESHOLD) {
-					tx.reap();
-					tx.direct(value);
+				if (value.byteLength >= 下行Grain包字节) {
+					await 下行发送器.flush();
+					await 下行发送器.直接发送(value);
+					readBuffer = new ArrayBuffer(BYOB单次读取上限);
 				} else {
-					tx.send(value.slice());
+					await 下行发送器.发送(value.slice());
+					readBuffer = value.buffer.byteLength >= BYOB单次读取上限 ? value.buffer : new ArrayBuffer(BYOB单次读取上限);
 				}
 			}
 		}
-
-		// TCP EOF 前把最后不足 32KB 的 grain 发掉
-		if (当前连接仍有效()) {
-			tx.reap();
+		if (当前连接仍有效()) await 下行发送器.flush();
+	} catch (err) { readError = err }
+	finally {
+		if (当前连接仍有效() && webSocket.readyState === WebSocket.OPEN) {
+			try { await 下行发送器.停止并刷新() } catch (err) { readError ||= err }
 		}
-	} catch (err) {
-		readError = err;
-	} finally {
-		// GrainTCP 风格：
-		// 只 flush + releaseLock。
-		// 不调用 reader.cancel()，避免主动取消 readable 导致长流被截断。
-		try {
-			tx.reap();
-		} catch (_) {}
-
-		if (
-			remoteConnWrapper?.downlinkController === 下行控制器
-		) {
-			remoteConnWrapper.downlinkController = null;
-		}
-
-		try {
-			reader?.releaseLock();
-		} catch (_) {}
-
-		try {
-			remoteSocket.close();
-		} catch (_) {}
+		if (remoteConnWrapper?.downlinkController === 下行控制器) remoteConnWrapper.downlinkController = null;
+		try { await reader.cancel() } catch (e) { }
+		try { reader.releaseLock() } catch (e) { }
+		try { remoteSocket.close() } catch (e) { }
 	}
-
-	// crossover 的优势继续保留：
-	// 如果这个 TCP 从头到尾一字节响应都没有，仍允许 fallback / ProxyIP
-	if (
-		!hasData &&
-		retryFunc &&
-		webSocket.readyState === WebSocket.OPEN &&
-		当前连接仍有效()
-	) {
+	if (!hasData && retryFunc && webSocket.readyState === WebSocket.OPEN && 当前连接仍有效()) {
 		try {
 			await retryFunc();
 			return;
@@ -3435,17 +3088,8 @@ async function connectStreams(
 			readError ||= err;
 		}
 	}
-
 	if (!当前连接仍有效()) return;
-
-	if (readError) {
-		log(
-			`[Hybrid GrainTCP下行] 读取失败: ${
-				readError?.message || readError
-			}`
-		);
-	}
-
+	if (readError) log(`[TCP下行] 读取失败: ${readError?.message || readError}`);
 	closeSocketQuietly(webSocket);
 }
 
